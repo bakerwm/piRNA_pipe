@@ -4,6 +4,11 @@
 piRNA analysis (small RNAseq) 
 
 
+date: 2020-12-27
+
+1. support collapsed reads, counting, RNA seqs, reads
+
+
 date: 2020-12-23
 Author: Ming Wang
 
@@ -61,6 +66,7 @@ import pybedtools
 import pysam
 import pandas as pd
 import numpy as np
+from multiprocessing import Pool
 from xopen import xopen
 from hiseq.trim.trimmer import Trim
 from piRNA_pipe_utils import *
@@ -104,6 +110,9 @@ def get_args():
         help='The target file for overlap')
     parser.add_argument('-p', '--threads', type=int, default=4,
         help='Number of threads to run')
+    parser.add_argument('-j', '--parallel-jobs', type=int, default=1,
+        dest='parallel_jobs',
+        help='number of jobs to run in parallel')
     parser.add_argument('-g', '--genome', default='dm6',
         help='reference genome, default: [dm6]')
     parser.add_argument('-ir', '--index-rRNA', default='smRNA',
@@ -142,9 +151,11 @@ class pipeConfig(object):
             'smp_name': None,
             'genome': 'dm6',
             'threads': 4,
+            'parallel_jobs': 1,
             'collapse': True,
             'workflow': 1,
-            'trimmed': False
+            'trimmed': True,
+            'force_overlap': False
         }
         self = update_obj(self, args_local, force=False)
         if self.outdir == None:
@@ -153,8 +164,14 @@ class pipeConfig(object):
 
         if self.smp_name == None:
             self.smp_name = fq_name(self.fq, pe_fix=True)
+        self.fq_name = self.smp_name + '.fq.gz' # output file
 
         self.outdir = os.path.join(self.outdir, self.smp_name)
+        if self.force_overlap and file_exists(self.subject):
+            self.outdir = os.path.join(self.outdir, 'overlap')
+        else:
+            self.subject = None
+        self.outdir = file_abspath(self.outdir)
 
         # update files
         self.init_dirs()
@@ -194,23 +211,25 @@ class pipeConfig(object):
         arg_dirs = {
             'config_dir': self.outdir + 'config',
             'raw_dir': self.outdir + '/00.raw_data', 
-            'clean_dir': self.outdir + '/01.clean_data',
-            'collapse_dir': self.outdir + '/02.collapse',
-            'smRNA_dir': self.outdir + '/03.smRNA',
-            'miRNA_dir': self.outdir + '/04.miRNA',
-            'size_dir': self.outdir + '/05.size_select',
-            'size_ex_dir': self.outdir + '/05.size_exclude',
-            'te_dir': self.outdir + '/06.te', # TE/piR_C/genome
-            'piRC_dir': self.outdir + '/07.piRNA_cluster', # piR_C (optional)
-            'genome_dir': self.outdir + '/08.genome', # genome (optional)
-            'unmap_dir': self.outdir + '/09.unmap',
-            'stat_dir': self.outdir + '/10.stat',
-            'report_dir': self.outdir + '/11.report'
+            'overlap_dir': self.outdir + '/01.overlap',
+            'clean_dir': self.outdir + '/02.clean_data',
+            'collapse_dir': self.outdir + '/03.collapse',
+            'smRNA_dir': self.outdir + '/04.smRNA',
+            'miRNA_dir': self.outdir + '/05.miRNA',
+            'size_dir': self.outdir + '/06.size_select',
+            'size_ex_dir': self.outdir + '/06.size_exclude',
+            'te_dir': self.outdir + '/07.te', # TE/piR_C/genome
+            'piRC_dir': self.outdir + '/08.piRNA_cluster', # piR_C (optional)
+            'genome_dir': self.outdir + '/09.genome', # genome (optional)
+            'unmap_dir': self.outdir + '/10.unmap',
+            'stat_dir': self.outdir + '/11.stat',
+            'report_dir': self.outdir + '/12.report'
         }
         self = update_obj(self, arg_dirs, force=True)
 
         check_path([
             self.raw_dir,
+            self.overlap_dir,
             self.clean_dir,
             self.collapse_dir,
             self.smRNA_dir,
@@ -256,33 +275,45 @@ class pipe(object):
         self = update_obj(self, args_local.__dict__, force=True)
 
 
-    def prep_raw(self, fx):
+    def prep_raw(self, fq):
         """Copy/symlink raw fastq files
         split files into 1U,10A, add stat
         """
         log.info('00.Copy raw data')
-        fq_raw = os.path.join(self.raw_dir, os.path.basename(fx))
-        file_symlink(fx, fq_raw)
-        # # 1U, 10A
-        # fx_list = split_fx_1u10a(fq_raw, remove=False)
-        # wrap stat
-        fx_stat2(self.raw_dir, recursive=False)
+        fq_raw = os.path.join(self.raw_dir, self.fq_name)
+        file_symlink(fq, fq_raw)
+        self.fx_not_empty(fq_raw, 'prep_raw', exit=True)
         return fq_raw
 
 
-    def trim(self, fx, trimmed=False):
+    def run_overlap(self, fq):
+        """Check single fastq, overlap with subject
+        Input fastq
+        """
+        log.info('01.Overlap with other RNAs')
+        fq_overlap = os.path.join(self.overlap_dir, self.fq_name)
+        if self.subject:
+            overlap_fq(fq, self.subject, self.overlap_dir)
+        else:
+            file_symlink(fq, fq_overlap)
+        self.fx_not_empty(fq_overlap, 'run_overlap', exit=True)
+        return fq_overlap
+
+
+    def run_trim(self, fq, trimmed=False):
         """Cut the adapters from the 3' end
         Trim reads:
         Trim(fq1, outdir, fq2, cut_after_trim='9,-6').run()
         if not:
             copy/links
         """
-        fx_clean = os.path.join(self.clean_dir, os.path.basename(fx))
+        log.info('02.Trim adapters')
+        fq_clean = os.path.join(self.clean_dir, self.fq_name)
         if trimmed:
-            file_symlink(fx, fx_clean)
+            file_symlink(fq, fq_clean)
         else:
             args_local = {
-                'fq1': fx,
+                'fq1': fq,
                 'outdir': self.clean_dir,
                 'library_type': None,
                 'len_min': 15,
@@ -292,270 +323,277 @@ class pipe(object):
             }
             trim = Trim(**args_local)
             trim.run()
-            file_symlink(trim.clean_fq, fx_clean)
-        # check output
-        if not check_file(fx_clean, emptycheck=True):
-            log.error('Stop at trim(), no reads output: {}'.format(
-                fx_clean))
-            raise Exception('no reads output: trim()')
-        # # 1U, 10A
-        # split_fx_1u10a(fx_clean, remove=False)
-        # wrap stat
-        fx_stat2(self.clean_dir, recursive=False)
-        return fx_clean
+            file_symlink(trim.clean_fq, fq_clean)
+        self.fx_not_empty(fq_clean, 'trim', exit=True)
+        return fq_clean
 
 
-    def run_collapse(self, fx):
+    def run_collapse(self, fq):
         """Collapse fastq files
         save read count in id line
         """
-        log.info('01.collapse fastq')
-        fq_collapse = os.path.join(self.collapse_dir, os.path.basename(fx))
+        log.info('03.Collapse fastq')
+        fq_collapse = os.path.join(self.collapse_dir, self.fq_name)
         if self.collapse:
-            fx_collapse(fx, self.collapse_dir)
+            out_fq = collapse_fx(fq, fq_collapse)
+            file_symlink(out_fq, fq_collapse)
         else:
-            file_symlink(fx, fq_collapse)
-        # # 1U, 10A
-        # split_fx_1u10a(fq_collapse, remove=False)
-        # wrap stat
-        fx_stat2(self.collapse_dir, recursive=False)
+            file_symlink(fq, fq_collapse)
+        self.fx_not_empty(fq_collapse, 'run_collapse', exit=True)
         return fq_collapse
 
 
-    def run_smRNA(self, fx):
+    def run_smRNA(self, fq):
         """Map reads to structural RNAs, remove map reads
         unique, multiple
         """
-        log.info('02.map to small RNA')
+        log.info('04.Map to small RNA')
         # alignment, unique + multiple, k=1
-        fq_not_smRNA = pipe_align(fx, self.smRNA_index, self.smRNA_dir, 
+        fq_smRNA, fq_not_smRNA = pipe_align(fq, self.smRNA_index, self.smRNA_dir, 
             self.threads, self.genome, remove_1u10a=False)
-        # wrap stat
-        fx_stat2(self.smRNA_dir, recursive=False)
-        # check output
-        if not check_file(fq_not_smRNA, emptycheck=True):
-            log.error('Stop at run_smRNA(), no reads output: {}'.format(
-                fq_not_smRNA))
-            raise Exception('no reads output: run_miRNA()')
+        self.fx_not_empty(fq_not_smRNA, 'run_smRNA', exit=True)
         return fq_not_smRNA
 
 
-    def run_miRNA(self, fx):
+    def run_miRNA(self, fq):
         """Map reads to miRNA, remove
         unique, multiple
         """
-        log.info('03.map to miRNA')
-        fq_not_miRNA = pipe_align(fx, self.miRNA_index, self.miRNA_dir, 
+        log.info('05.Map to miRNA')
+        fq_miRNA, fq_not_miRNA = pipe_align(fq, self.miRNA_index, self.miRNA_dir, 
             self.threads, self.genome, remove_1u10a=False)
-        # wrap stat
-        fx_stat2(self.miRNA_dir, recursive=True)
-        # check output
-        if not check_file(fq_not_miRNA, emptycheck=True):
-            log.error('Stop at run_miRNA(), no reads output: {}'.format(
-                fq_not_miRNA))
-            raise Exception('no reads output: run_miRNA()')
+        self.fx_not_empty(fq_not_miRNA, 'run_miRNA', exit=True)
         return fq_not_miRNA
 
 
-    def run_size_select(self, fx):
+    def run_size_select(self, fq):
         """Split fastq files by size
         23-29: piRNA candidates
         """
-        log.info('04.size select')
-        fx_in, fx_ex = splilt_fx_size(fx, outdir=self.size_dir, 
+        log.info('06.Size select')        
+        fq_size_in = os.path.join(self.size_dir, self.fq_name)
+        fq_size_ex = os.path.join(self.size_ex_dir, self.fq_name)
+        fq_in, fq_ex = splilt_fq_size(fq, outdir=self.size_dir,
             min=23, max=29, gzipped=True)
-        fq_size_in = os.path.join(self.size_dir, os.path.basename(fx_in))
-        file_symlink(fx_in, fq_size_in)
-        # split_fx_1u10a(fq_size_in, remove = False)
-        fx_stat2(self.size_dir, recursive=False)
-        # self.run_overlap(fq_size_in) # overlap
-        # exclude
-        fq_size_ex = os.path.join(self.size_ex_dir, os.path.basename(fx_in))
-        file_symlink(fx_ex, fq_size_ex)
-        # split_fx_1u10a(fq_size_ex, remove=False)
-        fx_stat2(self.size_ex_dir, recursive=False)
-        # check output
-        if not check_file(fq_size_in, emptycheck=True):
-            log.error('Stop at run_size_select(), no reads output: {}'.format(
-                fq_size_in))
-            raise Exception('no reads output: run_size_select()')
+        file_symlink(fq_in, fq_size_in)
+        file_symlink(fq_ex, fq_size_ex)
+        self.fx_not_empty(fq_size_in, 'run_size_select', exit=True)
         return fq_size_in
 
 
-    def run_TE(self, fx):
+    def run_TE(self, fq):
         """Map reads to TE consensus
         """
-        log.info('05.map to TE')
-        fq_not_te = pipe_align(fx, self.te_index, self.te_dir, 
+        log.info('07.map to TE')
+        # fq_te = os.path.join(self.te_dir, self.fq_name)
+        fq_te, fq_not_te = pipe_align(fq, self.te_index, self.te_dir, 
             self.threads, self.genome, unique_multi='all')
-        fq_te = os.path.join(self.te_dir, self.smp_name + '.fastq.gz')
-        # self.run_overlap(fq_te)
-        # wrap stat
-        fx_stat2(self.te_dir, recursive=False)
-        # check output
-        if not check_file(fq_not_te, emptycheck=True):
-            log.error('Stop at run_TE(), no reads output: {}'.format(
-                fq_not_te))
-            raise Exception('no reads output: run_TE()')
+        self.fx_not_empty(fq_not_te, 'run_TE', exit=True)
         return fq_not_te
 
 
-    def run_piRC(self, fx):
+    def run_piRC(self, fq):
         """Map reads to piRNA cluster
         mapping
         """
-        log.info('06.map to piRNA cluster')
-        fq_not_piRC = pipe_align(fx, self.piRC_index, self.piRC_dir, 
+        log.info('08.Map to piRNA cluster')
+        # fq_piRC = os.path.join(self.piRC_dir, self.fq_name)
+        fq_piRC, fq_not_piRC = pipe_align(fq, self.piRC_index, self.piRC_dir, 
             self.threads, self.genome, unique_multi='all')
-        fq_piRC = os.path.join(self.piRC_dir, self.smp_name + '.fastq.gz')
-        # self.run_overlap(fq_piRC)
-        # wrap stat
-        fx_stat2(self.piRC_dir, recursive=False)
-        # check output
-        if not check_file(fq_not_piRC, emptycheck=True):
-            log.error('Stop at run_piRC(), no reads output: {}'.format(
-                fq_not_piRC))
-            raise Exception('no reads output: run_piRC()')
+        self.fx_not_empty(fq_not_piRC, 'run_PiRC', exit=False)
         return fq_not_piRC
 
 
-    def run_genome(self, fx):
+    def run_genome(self, fq):
         """map reads to genome
         non-TE reads to genome
         """
-        log.info('07.map to genome')
-        fq_not_genome = pipe_align(fx, self.genome_index, self.genome_dir, 
+        log.info('09.Map to genome')
+        # fq_genome = os.path.join(self.genome_dir, self.fq_name)
+        fq_unmap = os.path.join(self.unmap_dir, self.fq_name)
+        fq_genome, fq_not_genome = pipe_align(fq, self.genome_index, self.genome_dir, 
             self.threads, self.genome, unique_multi='all')
-        fq_genome = os.path.join(self.genome_dir, self.smp_name + '.fastq.gz')
-        # self.run_overlap(fq_genome)
-        # wrap stat
-        fx_stat2(self.genome_dir, recursive=False)
-        # check output
-        if not check_file(fq_not_genome, emptycheck=True):
-            log.error('Stop at run_genome(), no reads output: {}'.format(
-                fq_not_genome))
-            raise Exception('no reads output: run_genome()')
-        # save unmap
-        fx_name = os.path.basename(fx).replace('.unmap', '')
-        fx_unmap = os.path.join(self.unmap_dir, fx_name)
-        file_symlink(fq_not_genome, fx_unmap)
-        # split_fx_1u10a(fx_unmap)
-        fx_stat2(self.unmap_dir, recursive=False)
+        file_symlink(fq_not_genome, fq_unmap)
+        self.fx_not_empty(fq_not_genome, 'run_genome', exit=False)
         return fq_not_genome
 
 
-    ############################
-    ## collapse, RNA species
-    ############################
-    def run_unique_reads(self):
-        """Collapse reads in level-1
+    ################################
+    # if reads empty:
+    # Break pipe
+    # prep_raw, trim, run_collapse, run_smRNA, run_miRNA, run_size_select
+    #
+    # Skip pipe
+    # run_TE, run_piRC, run_genome
+    ################################
+    def fx_not_empty(self, fx, name=None, exit=False):
+        """Check the fx empty or not;
         count reads
         """
-        log.info('collapse reads to piRNA species')
-        fx1 = self.get_subfiles(level=1)
-        fx2 = self.get_subfiles(level=1, group='overlap')
-        fx3 = self.get_subfiles(level=2)
-        fx4 = self.get_subfiles(level=2, group='overlap')
-        fx_subfiles = fx1 + fx2 + fx3 + fx4
-        for fx in fx_subfiles:
-            fx_collapse_dir = os.path.join(os.path.dirname(fx), 'collapse')
-            fx_collapse(fx, fx_collapse_dir)
-
-        # fx stat
-        dir1 = self.get_subdirs(level=1)
-        dir2 = self.get_subdirs(level=1, group='overlap')
-        dir3 = self.get_subdirs(level=2)
-        dir4 = self.get_subdirs(level=2, group='overlap')
-        fx_subdirs = dir1 + dir2 + dir3 + dir4
-        for fx in fx_subdirs:
-            fx_collapse_dir = os.path.join(fx, 'collapse')
-            fx_stat2(fx_collapse_dir)
+        chk = check_file(fx, emptycheck=True)
+        if not chk:
+            log.error('Stop at {}(), file not exists: {}'.format(name, fx))
+            if exit:
+                raise Exception('exit pipeline at {}().'.format(name))
 
 
-    ############################
-    ## statistics
-    ## 1. 1U, 10A
-    ## 2. overlap with subject 
-    ############################
-    def get_subdirs(self, level=1, group=None):
+    ################################
+    # return files, folders
+    # group=overlap,collapse,...
+    ################################
+    def get_sub_dir(self, u1a10=False, group=None):
         """Return the working directories
-        group: overlap, collapse
-        level-1: 00.raw_data/
-        level-2: 00.raw_data/1U_10A/
+        group: overlap
         """
         # level-1 00.raw_dat to 09.unmap
-        fx_dirs = listfile(self.outdir, include_dir=True)
-        # level-2 1u10a dirs
-        fx_1u10a = [os.path.join(i, '1U_10A') for i in fx_dirs]
-        fx_1u10a = [i for i in fx_1u10a if os.path.exists(i)]
-        # output
-        out = fx_1u10a if level == 2 else fx_dirs
+        sub_dir = listfile(self.outdir, include_dir=True)
         # add group
         if isinstance(group, str):
-            out = [os.path.join(i, group) for i in out]
-        return out
+            sub_dir = [os.path.join(i, group) for i in sub_dir]
+        # u1a10
+        if u1a10:
+            sub_dir = [os.path.join(i, '1U_10A') for i in sub_dir]
+        # existence
+        sub_dir = [i for i in sub_dir if os.path.exists(i)]
+        return sub_dir
 
 
-    def get_subfiles(self, level=1, group=None):
+    def get_sub_fx(self, u1a10=False, group=None):
         """Return the 00.raw_data to 09.unmap fastq files
         group: overlap, collapse
-        level-1: 00.raw_data/*fastq.gz
-        level-2: 00.raw_data/1U_10A/*.fastq.gz
         """
-        fx_list = []
-        fx_dirs = self.get_subdirs(level, group)
-        for fx in fx_dirs:
-            fx_gz = listfile(fx, '*.gz', recursive=False)
-            if len(fx_gz) > 0:
-                fx_list.extend(fx_gz)
+        sub_fx = []
+        sub_dirs = self.get_sub_dir(u1a10, group)
+        for d in sub_dirs:
+            fx = listfile(d, '*.gz', recursive=False)
+            if len(fx) > 0:
+                sub_fx.extend(fx)
+        return sub_fx
 
-        return fx_list
+
+    def get_sub_stat(self, u1a10=False, group=None):
+        """Return the 00.raw_data to 09.unmap stat file: fq_stat.toml
+        group: overlap, collapse
+        """
+        stat_list = []
+        sub_dirs = self.get_sub_dir(u1a10, group)
+        for d in sub_dirs:
+            s = listfile(d, 'fq_stat.toml', recursive=False)
+            if len(s) > 0:
+                stat_list.extend(s)
+        return stat_list
+
+
+    ################################
+    # Check overlap between subject file
+    # group=overlap,collapse,...
+    ################################
+    # # worker: for single fx
+    # def run_overlap_single(self, i):
+    #     """Check single fastq, overlap with subject
+    #     Input fastq
+    #     """
+    #     fx = self.overlap_fq_list[i]
+    #     outdir = os.path.join(os.path.dirname(fx), 'overlap')
+    #     overlap_fq(fx, self.subject, outdir)
+
+
+    # def run_overlap(self):
+    #     """Check fastq files overlap with subject
+    #     Create overlap dir
+    #     output overlap files
+    #     """
+    #     # all fastq files, to compare
+    #     self.overlap_fq_list = self.get_sub_fx(u1a10=False) # level-1: 00.raw_data 
+    #     self.overlap_fq_list = [i for i in self.overlap_fq_list \
+    #         if check_file(i, emptycheck=True)]
+    #     # multi threads
+    #     if len(self.overlap_fq_list) > 1 and self.parallel_jobs > 1:
+    #         with Pool(processes=self.parallel_jobs) as pool:
+    #             pool.map(self.run_overlap_single, range(len(self.overlap_fq_list)))
+    #     else:
+    #         for i in range(len(self.overlap_fq_list)):
+    #             self.run_overlap_single(i)
+
+
+    ################################
+    # stat: 1U_10A
+    ################################
+    # worker: for single fx
+    def run_1u10a_single(self, i):
+        """Split fx, by 1U, 10A
+        input: index
+        """
+        fx = self.u1a10_fq_list[i]
+        split_fq_1u10a(fx, remove=False)
 
 
     def run_1u10a(self):
-        """Check the 1U10A content for the subfiles
-        level-1: for 00.raw_data/*.fastq.gz 
+        """Check the 1U10A content for fastq files
+        level-1: 00.raw_data
+        level-2: 00.raw_data/overlap/
         """
-        fx_subfiles = self.get_subfiles(level=1)
-        for fx in fx_subfiles:
-            fx_1u10a = os.path.join(os.path.dirname(fx), '1U_10A')
-            split_fx_1u10a(fx, remove=False)
-            fx_stat2(fx_1u10a)
+        fq_a = self.get_sub_fx(u1a10=False, group=None) # level-1
+        fq_b = self.get_sub_fx(u1a10=False, group='overlap')
+        self.u1a10_fq_list = fq_a + fq_b
+        # remove empty files
+        self.u1a10_fq_list = [i for i in self.u1a10_fq_list \
+            if check_file(i, emptycheck=True)]
+        # multi threads
+        if len(self.u1a10_fq_list) > 1 and self.parallel_jobs > 1:
+            with Pool(processes=self.parallel_jobs) as pool:
+                pool.map(self.run_1u10a_single, range(len(self.u1a10_fq_list)))
+        else:
+            for i in range(len(self.u1a10_fq_list)):
+                self.run_1u10a_single(i)
 
 
-    def run_overlap(self):
-        """Check fastq files overlap with subject
-        level-1: 00.raw_data/*fastq.gz
-        level-2: 00.raw_data/1U_10A/*.fastq.gz
+    ################################
+    # count reads: stat_fq
+    ################################
+    # worker: for single dir
+    def run_count_fx_single(self, i):
+        """Stat fq for single file/dir
+        wrap fq_stat.toml for dir
         """
-        # level-1: single files
-        fx_subfiles = self.get_subfiles(level=1)
-        for fx in fx_subfiles:
-            fx_ov = os.path.join(os.path.dirname(fx), 'overlap')
-            fq_overlap(fx, self.subject, fx_ov)
-            fx_stat2(fx_ov)
-
-        # level-2: multi files
-        fx_1u10a_dirs = self.get_subdirs(level=2)
-        fx_1u10a_files = self.get_subfiles(level=2)
-        for fx in fx_1u10a_files:            
-            fx_ov = os.path.join(os.path.dirname(fx), 'overlap')
-            fq_overlap(fx, self.subject, fx_ov)
-        for fx in fx_1u10a_dirs:
-            fx_ov = os.path.join(fx, 'overlap')
-            fx_stat2(fx_ov)
+        i_dir = self.count_dir_list[i]
+        count_fx_dir(i_dir, collapsed=True) # save to fname.fq_stat.toml
 
 
-    def read_fx_stat(self, x):
+    def run_count_fx(self):
+        """Count reads, RNA seqs in each categories
+        level-1: 00.raw_data
+        level-1: 00.raw_data/1U_10A
+        level-2: 00.raw_data/overlap
+        level-2: 00.raw_data/overlap/1U_10A
+        """
+        dir_a = self.get_sub_dir(u1a10=False, group=None) # level-1
+        dir_b = self.get_sub_dir(u1a10=True, group=None) # level-1,u1a10
+        dir_c = self.get_sub_dir(u1a10=False, group='overlap') # level-2
+        dir_d = self.get_sub_dir(u1a10=True, group='overlap') # level-2,u1a10
+        self.count_dir_list = dir_a + dir_b + dir_c + dir_d
+        # multi threads
+        if len(self.count_dir_list ) > 1 and self.parallel_jobs > 1:
+            with Pool(processes=self.parallel_jobs) as pool:
+                pool.map(self.run_count_fx_single, 
+                    range(len(self.count_dir_list)))
+        else:
+            for i in range(len(self.count_dir_list)):
+                self.run_count_fx_single(i)
+
+
+    def read_fx_toml(self, x):
         """Convert toml to pd.DataFrame
         dict -> pd
-
+        num_reads
         num_seqs
         """
         df = None
         if isinstance(x, str):
             if x.endswith(".toml"):
-                df = pd.DataFrame.from_dict(Toml(x).to_dict())
+                d = Toml().from_toml(x)
+                if len(d) > 0:
+                    df = pd.DataFrame.from_dict(d, 'index')
             else:
                 log.error('x is not .toml file')
         else:
@@ -563,214 +601,201 @@ class pipe(object):
         return df
 
 
-    def read_fx_level1(self):
-        """Read the fx stat in 00.raw_data/ level
-        count
-        group
+    def run_qc_f1(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
         """
-        fx_dirs = self.get_subdirs(level=1)
-        fx_list = [i + '/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = [self.read_fx_stat(i) for i in fx_list]
-        df = pd.concat(fx_frames, axis=0).reset_index()
-        df.columns = ['sample', 'num_seqs']
-        g_list = [os.path.basename(os.path.dirname(i)) for i in fx_list]
-        df['group'] = g_list
-        df['1u10a'] = 'all'
+        dir_list = self.get_sub_dir(u1a10=False, group=None)
+        s_list = [i + '/fx_stat.toml' for i in dir_list]
+        s_list = [i for i in s_list if os.path.exists(i)]
+        s_dir = [os.path.dirname(i) for i in s_list]
+        s_frames = [self.read_fx_toml(i) for i in s_list]
+        df = pd.concat(s_frames, axis=0)
+        df.columns = ['sample', 'num_reads', 'num_seqs']
+        df['group'] = [pathlib.Path(i).parts[-1] for i in s_dir]
+        df['u1a10'] = 'all'
+        df['overlap'] = 'all'
         return df
 
 
-    def read_fx_level2(self):
-        """Read 1U10A in 00.raw_data/1U10A/
-        count
-        group
-        1u10a
+    def run_qc_f2(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
         """
-        fx_dirs = self.get_subdirs(level=2)
-        fx_list = [i + '/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['1u10a', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-3]
-            df['sample'] = self.smp_name
-            fx_frames.append(df)
-        df = pd.concat(fx_frames, axis=0)
+        dir_list = self.get_sub_dir(u1a10=True, group=None)
+        s_list = [i + '/fx_stat.toml' for i in dir_list]
+        s_list = [i for i in s_list if os.path.exists(i)]
+        s_dir = [os.path.dirname(i) for i in s_list]
+        s_frames = [self.read_fx_toml(i) for i in s_list]
+        # for each file
+        s_frames = []
+        for i in s_list:
+            dfx = self.read_fx_toml(i)
+            dfx.columns = ['sample', 'num_reads', 'num_seqs']
+            dfx['group'] = pathlib.Path(i).parts[-3]
+            s_frames.append(dfx)
+        df = pd.concat(s_frames, axis=0)
+        df[['sample', 'u1a10']] = df['sample'].str.split('.', 1, expand=True)
+        df['overlap'] = 'all'
         return df
 
 
-    def read_fx_level1x(self):
-        """Read the fx stat in 00.raw_data/overlap level
-        count
-        group
+    def run_qc_fn(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
         """
-        fx_dirs = self.get_subdirs(level=1)
-        fx_list = [i + '/overlap/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['overlap', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-3]
-            df['sample'] = self.smp_name
-            df['1u10a'] = 'all'
-            fx_frames.append(df)
-        df = pd.concat(fx_frames, axis=0)
-        return df
-
-
-    def read_fx_level2x(self):
-        """Read 1U10A in 00.raw_data/1U_10A/overlap/
-        count
-        group
-        1u10a
-        """
-        fx_dirs = self.get_subdirs(level=2)
-        fx_list = [i + '/overlap/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['overlap', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-4]
-            df['sample'] = self.smp_name
-            fx_frames.append(df)
-        df = pd.concat(fx_frames, axis=0)
-        return df
-
-
-    def read_fx_collapse(self):
-        """Read 00.raw_data/collapse, 
-        00.raw_data/1U_10A/collapse
-        for reads
-        """
-        # level-1
-        fx_dirs = self.get_subdirs(level=1)
-        fx_list = [i + '/collapse/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['sample', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-3]
-            df['1u10a'] = 'all'
-            fx_frames.append(df)
-        df1 = pd.concat(fx_frames, axis=0)
-
-        # level-2
-        fx_dirs = self.get_subdirs(level=2)
-        fx_list = [i + '/collapse/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['unique', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-4]
-            fx_frames.append(df)
-        df2 = pd.concat(fx_frames, axis=0)
-        df2[['sample', '1u10a']] = df2.unique.str.split('.', 1, expand=True)
-        df2 = df2.drop(['unique'], axis=1)
-
-        # combine level1, level2
+        df1 = self.run_qc_f1()
+        df2 = self.run_qc_f2()
         df3 = pd.concat([df1, df2], axis=0)
-        df3x = df3.pivot_table(columns='1u10a', values='num_seqs', index=['sample', 'group'])
-        df3x.reset_index(inplace=True)
+        df3 = df3.astype({'num_reads': 'int32', 'num_seqs': 'int32'})
+        # reads
+        stat_a = os.path.join(self.stat_dir, 'fx_stat.reads.txt')
+        df3a = df3.drop(['num_seqs'], axis=1)
+        df3a = df3a.pivot_table(columns='u1a10', values='num_reads', 
+            index=['sample', 'group', 'overlap'])
+        df3a.reset_index(inplace=True)
+        df3a = df3a.fillna(0)
+        df3a.to_csv(stat_a, index=False)
+        # RNAs
+        stat_b = os.path.join(self.stat_dir, 'fx_stat.seqs.txt')
+        df3b = df3.drop(['num_reads'], axis=1)
+        df3b = df3b.pivot_table(columns='u1a10', values='num_seqs', 
+            index=['sample', 'group', 'overlap'])
+        df3b.reset_index(inplace=True)
+        df3b = df3b.fillna(0)
+        df3b.to_csv(stat_b, index=False)
 
-        # save to file
-        stat_txt = os.path.join(self.stat_dir, 'fx_stat.collapse.txt')
-        df3x.to_csv(stat_txt, index=False)
 
-
-    def read_fx_collapse2(self):
-        """Read 00.raw_data/overlap/collapse, 
-        00.raw_data/1U_10A/overlap/collapse
-        for reads
+    def run_qc_v1(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
         """
-        # level-1
-        fx_dirs = self.get_subdirs(level=1, group='overlap')
-        fx_list = [i + '/collapse/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['overlap', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-4]
-            df['1u10a'] = 'all'
-            fx_frames.append(df)
-        df1 = pd.concat(fx_frames, axis=0)        
-        df1[['overlap', 'sample']] = df1.overlap.str.split('.', 1, expand=True)
+        dir_list = self.get_sub_dir(u1a10=False, group='overlap')
+        s_list = [i + '/fx_stat.toml' for i in dir_list]
+        s_list = [i for i in s_list if os.path.exists(i)]
+        s_dir = [os.path.dirname(i) for i in s_list]
+        s_frames = [self.read_fx_toml(i) for i in s_list]
+        df = pd.concat(s_frames, axis=0)
+        df.columns = ['sample', 'num_reads', 'num_seqs']
+        df['group'] = [pathlib.Path(i).parts[-2] for i in dir_list]
+        df['u1a10'] = 'all'
+        df['overlap'] = 'overlap'
+        df = df.astype({'num_reads':'int32', 'num_seqs': 'int32'})
+        return df
 
-        # level-2
-        fx_dirs = self.get_subdirs(level=2, group='overlap')
-        fx_list = [i + '/collapse/fx_stat.toml' for i in fx_dirs]
-        fx_list = [i for i in fx_list if file_exists(i)]
-        fx_frames = []
-        for i in fx_list:
-            df = self.read_fx_stat(i)
-            df.reset_index(inplace=True)
-            df.columns = ['overlap', 'num_seqs']
-            df['group'] = pathlib.Path(i).parts[-5]
-            fx_frames.append(df)
-        df2 = pd.concat(fx_frames, axis=0)
-        df2[['overlap', 'sample', '1u10a']] = df2.overlap.str.split('.', 2, expand=True)
 
-        # combine level1, level2
+    def run_qc_v2(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
+        """
+        dir_list = self.get_sub_dir(u1a10=True, group='overlap')
+        s_list = [i + '/fx_stat.toml' for i in dir_list]
+        s_list = [i for i in s_list if os.path.exists(i)]
+        s_dir = [os.path.dirname(i) for i in s_list]
+        # s_frames = [self.read_fx_toml(i) for i in s_list]
+        s_frames = []
+        for i in s_list:
+            dfx = self.read_fx_toml(i)
+            dfx.columns = ['sample', 'num_reads', 'num_seqs']
+            dfx['group'] = pathlib.Path(i).parts[-4]
+            s_frames.append(dfx)
+        df = pd.concat(s_frames, axis=0)
+        df[['sample', 'u1a10']] = df['sample'].str.split('.', 1, expand=True)
+        df['overlap'] = 'overlap'
+        df = df.astype({'num_reads':'int32', 'num_seqs': 'int32'})
+        return df
+
+
+    def run_qc_vn(self):
+        """Summary the reads in level-1
+        f1: level-1: 00.raw_dir
+        f2: level-1: 00.raw_data/1U_10A
+        v1: level-2: 00.raw_dir/overlap
+        v2: level-2: 00.raw_dir/overlap/1U_10A
+        """
+        df1 = self.run_qc_v1()
+        df2 = self.run_qc_v2()
         df3 = pd.concat([df1, df2], axis=0)
-        df3x = df3.pivot_table(columns='1u10a', values='num_seqs', index=['sample', 'group', 'overlap'])
-        df3x.reset_index(inplace=True)
+        df3 = df3.astype({'num_reads': 'int32', 'num_seqs': 'int32'})
+        # reads
+        stat_a = os.path.join(self.stat_dir, 'fx_stat.overlap.reads.txt')
+        df3a = df3.drop(['num_seqs'], axis=1)
+        df3a = df3a.pivot_table(columns='u1a10', values='num_reads', 
+            index=['sample', 'group', 'overlap'])
+        df3a.reset_index(inplace=True)
+        df3a = df3a.fillna(0)
+        df3a.to_csv(stat_a, index=False)
+        # RNAs
+        stat_b = os.path.join(self.stat_dir, 'fx_stat.overlap.seqs.txt')
+        df3b = df3.drop(['num_reads'], axis=1)
+        df3b = df3b.pivot_table(columns='u1a10', values='num_seqs', 
+            index=['sample', 'group', 'overlap'])
+        df3b.reset_index(inplace=True)
+        df3b = df3b.fillna(0)
+        print(df3b)
+        df3b.to_csv(stat_b, index=False)
 
-        # save to file
-        stat_txt = os.path.join(self.stat_dir, 'fx_stat.overlap.collapse.txt')
-        df3x.to_csv(stat_txt, index=False)
 
-
-    def run_stat(self):
-        """Create stat report for the alignment
-        1. number of reads in categories
-        2. number of reads in overlap
+    ################################
+    # Post analysis
+    ################################
+    def run_post_analysis(self):
+        """For all post analysis
+        overlap
+        1U_10A
+        stat_fq
+        ...
         """
-        # 1. reads in each categories
-        df1 = self.read_fx_level1()
-        df2 = self.read_fx_level2()
-        df = pd.concat([df1, df2], axis=0)
-        df['1u10a'] = [re.sub(self.smp_name + '.', '', i) for i in  df['1u10a']]
-        dfx = df.pivot_table(columns='1u10a', values='num_seqs', index=['sample', 'group'])
-        dfx.reset_index(inplace=True)
-        f1_stat_txt = os.path.join(self.stat_dir, 'fx_stat.txt')
-        dfx.to_csv(f1_stat_txt, index=False)
-
-        # 2. including overlap reads
-        df1x = self.read_fx_level1x()
-        df2x = self.read_fx_level2x()
-        df1x[['overlap', 'sample']] = df1x.overlap.str.split('.', 1, expand=True)
-        df2x[['overlap', 'sample', '1u10a']] = df2x.overlap.str.split('.', 2, expand=True)
-        df3 = pd.concat([df1x, df2x], axis=0)
-        df3x = df3.pivot_table(columns='1u10a', values='num_seqs', index=['sample', 'group', 'overlap'])
-        df3x.reset_index(inplace=True)
-        f2_stat_txt = os.path.join(self.stat_dir, 'fx_stat.overlap.txt')
-        df3x.to_csv(f2_stat_txt, index=False)
-
-        # 3. collapse piRNAs for each categories
-        self.read_fx_collapse()
-
-        # 4. collapse piRNAs in overlap
-        self.read_fx_collapse2()
+        log.info('10.Post analysis, 1U_10A')
+        ##### self.run_overlap() # skipped, time
+        self.run_1u10a()
+        self.run_count_fx()
+        self.run_qc_fn()
+        ##### self.run_qc_vn() # skipped, time
 
 
+    ################################
+    # Main port:
+    ################################
     def run(self):
-        fq_raw = self.prep_raw(self.fq)
-        fq_clean = self.trim(fq_raw, trimmed=True)
-        fq_collapse = self.run_collapse(fq_raw)
-        fq_not_smRNA = self.run_smRNA(fq_collapse)
-        fq_not_miRNA = self.run_miRNA(fq_not_smRNA)
-        fq_size = self.run_size_select(fq_not_miRNA)
+        # fq_raw = self.prep_raw(self.fq)
+        # fq_overlap = self.run_overlap(fq_raw)
+        # fq_clean = self.run_trim(fq_overlap, trimmed=True)
+        # fq_collapse = self.run_collapse(fq_clean)
+        # fq_not_smRNA = self.run_smRNA(fq_collapse)
+        # fq_not_miRNA = self.run_miRNA(fq_not_smRNA)
+        # fq_size = self.run_size_select(fq_not_miRNA)
+        ## run 00.raw_data -> 05.miRNA
+        fq_size = self.run_size_select(
+            self.run_miRNA(
+                self.run_smRNA(
+                    self.run_collapse(
+                        self.run_trim(
+                            self.run_overlap(
+                                self.prep_raw(self.fq)
+                            ), 
+                            trimmed=self.trimmed
+                        )
+                    )
+                )
+            )
+        )
+
         if self.workflow == 1:
             # workflow-1: smRNA->miRNA->size->TE->piRC->genome
             fq_not_genome = self.run_genome(
@@ -793,50 +818,60 @@ class pipe(object):
             raise Exception('workflow expect [1:4], default: 1')
 
         ## for statistics
-        self.run_1u10a()
-        self.run_unique_reads()
-        self.run_overlap()
-        self.run_stat()
+        self.run_post_analysis()
 
 
-def fq_overlap(query, subject, outdir):
-    """Compare, overlap between fastq files
-    using list, set
+def overlap_fq(query, subject, outdir=None, threads=4):
+    """Check overlap between fastq files, by sequence
+    using command tool: 
+    1. seqkit common -s small.fq.gz big.fq.gz
+    2. seqkit grep -s -f <(seqkit seq -s small.fq.gz) big.fq.gz # by seq
     """
-    check_path(outdir)
-    d = {}
-    with xopen(subject, 'rt') as r:
-        for n, s, q, m in readfq(r):
-            # version-1
-            # check: 1-23 nt, for overlap
-            s = s[:23]
-            d[s] = d.get(s, 0) + 1
-    # all unique subject sequences, 1-23 nt
-    sub = set(d.keys())
-
-    # output files
-    fx_name = fq_name(query)
-    fx_in = os.path.join(outdir, 'overlap.'+os.path.basename(query))
-    fx_ex = os.path.join(outdir, 'not_overlap.'+os.path.basename(query))
-    if all(file_exists([fx_in, fx_ex])):
-        log.info('fq_overlap() skipped, file exists: {}'.format(fx_name))
+    if not isinstance(outdir, str):
+        outdir = os.path.dirname(query)
+    if not check_file([query, subject], emptycheck=True):
+        log.warning('file not exists, or empty: {}, {}'.format(query, subject))
     else:
-        with xopen(query, 'rt') as r, \
-            xopen(fx_in, 'wt') as w1, \
-            xopen(fx_ex, 'wt') as w2:
-            for n, s, q, m in readfq(r):
-                fq = '\n'.join(['@'+n, s, '+', q])
-                s1 = s[:23]
-                w = w1 if s1 in sub else w2
-                w.write(fq + '\n') 
+        check_path(outdir)
+        out_fq = os.path.join(outdir, os.path.basename(query))
+        out_log = os.path.join(outdir, 'cmd.log')
+        out_cmd = os.path.join(outdir, 'cmd.sh')
+        ## slower than seqkit common
+        # cmd = ' '.join([
+        #     'seqkit grep -s -i -j {}'.format(threads),
+        #     '-f <(seqkit seq -s {})'.format(query),
+        #     '{}'.format(subject),
+        #     '2>{}'.format(out_log),
+        #     '| pigz -p {} >{}'.format(threads, out_fq),
+        # ])
+        cmd = ' '.join([
+            'seqkit common -s -j {}'.format(threads),
+            '{} {}'.format(query, subject),
+            '2> {}'.format(out_log),
+            '| pigz -p {} > {}'.format(threads, out_fq)
+        ])
+        with open(out_cmd, 'wt') as w:
+            w.write(cmd + '\n')
 
-    return fx_in
+        if file_exists(out_fq):
+            log.info('overlap_fq() skipped, file exists: {}'.format(out_fq))
+        else:
+            # os.system(cmd)
+            run_shell_cmd(cmd)
+
+        return out_fq
 
 
 def main():
-    # args = get_args()
     args = vars(get_args())
-    pipe(**args).run()
+    if args['subject']:
+        args_local = args.copy()
+        args['force_overlap'] = True
+        pipe(**args_local).run()
+    # force outdir, subject=None
+    args_local2 = args.copy()
+    args['force_overlap'] = False
+    pipe(**args_local2).run()
 
 
 if __name__ == '__main__':
