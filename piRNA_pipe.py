@@ -103,8 +103,8 @@ def get_args():
     parser.add_argument('-w', '--workflow', type=int, default=1,
         help='workflow, 1:4, 1:TE->piRC->Genome; 2:TE->Genome; \
         3:piRC->TE->Genome; 4:piRC->Genome;  default: [1]')
-    parser.add_argument('-c', '--collapse', action='store_true',
-        help='collapse fastq reads')
+    # parser.add_argument('-c', '--collapse', action='store_true',
+    #     help='collapse fastq reads')
     parser.add_argument('-t', '--trimmed', action='store_true',
         help='Input file was clean data, no need to trim adapters')
     parser.add_argument('--subject', default=None,
