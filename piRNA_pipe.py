@@ -887,45 +887,6 @@ def overlap_fq(query, subject, outdir=None, threads=4):
         return out_fq
 
 
-# failed
-# debug required
-# !!!
-def overlap_fq2(query, subject, outdir=None, mm=0, range=[8, 25]):
-    """Check overlap between fastq files, by sequence, allow mismatch 
-    query: small size
-    subject: bigger size
-    rules:
-    allow mismatch in 8-25 nt: range
-    number of mismatches:
-    """
-    if not isinstance(outdir, str):
-        outdir = os.path.dirname(query)
-    if not check_file([query, subject], emptycheck=True):
-        log.warning('file not exists, or empty: {}, {}'.format(query, subject))
-    else:
-        check_path(outdir)
-        out_fq = os.path.join(outdir, os.path.basename(query))
-        out_log = os.path.join(outdir, 'cmd.log')
-        out_cmd = os.path.join(outdir, 'cmd.sh')
-        if mm == 0:
-            out_fq = overlap_fq(query, subject, outdir)
-        else:
-            # collapse query, subject
-            with xopen(query, 'rt') as r1, xopen(subject, 'rt') as r2, \
-                xopen(out_fq, 'wt') as w:
-                for d1 in readfq(r1):
-                    w.write('\n'.join(d1)+'\n')
-                # for n, s, q, m in readfq(r1):
-                #     b = '\n'.join(['@'+n,s,'+',q])
-                    # a1 = s[range[0]:range[1]]
-                    # for n2, s2, q2, m2 in readfq(r2):
-                    #     a2 = s[range[0]:range[1]]
-                    #     h = Levenshtein.distance(a1, a2)
-                    #     if h <= mm:
-                    #         w.write(b+'\n')
-        return out_fq
-
-
 class OverlapFq(object):
     """Check fastq overlap
     # 1. convert subject to fasta / collapse
