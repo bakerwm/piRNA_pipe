@@ -360,7 +360,7 @@ class pipe(object):
         fq_collapse = os.path.join(self.collapse_dir, self.fq_name)
         if self.collapse:
             out_fq = collapse_fx(fq, fq_collapse)
-            file_symlink(out_fq, fq_collapse)
+            # file_symlink(out_fq, fq_collapse)
         else:
             file_symlink(fq, fq_collapse)
         self.fx_not_empty(fq_collapse, 'run_collapse', exit=True)
@@ -536,38 +536,6 @@ class pipe(object):
 
 
     ################################
-    # Check overlap between subject file
-    # group=overlap,collapse,...
-    ################################
-    # # worker: for single fx
-    # def run_overlap_single(self, i):
-    #     """Check single fastq, overlap with subject
-    #     Input fastq
-    #     """
-    #     fx = self.overlap_fq_list[i]
-    #     outdir = os.path.join(os.path.dirname(fx), 'overlap')
-    #     overlap_fq(fx, self.subject, outdir)
-
-
-    # def run_overlap(self):
-    #     """Check fastq files overlap with subject
-    #     Create overlap dir
-    #     output overlap files
-    #     """
-    #     # all fastq files, to compare
-    #     self.overlap_fq_list = self.get_sub_fx(u1a10=False) # level-1: 00.raw_data 
-    #     self.overlap_fq_list = [i for i in self.overlap_fq_list \
-    #         if check_file(i, emptycheck=True)]
-    #     # multi threads
-    #     if len(self.overlap_fq_list) > 1 and self.parallel_jobs > 1:
-    #         with Pool(processes=self.parallel_jobs) as pool:
-    #             pool.map(self.run_overlap_single, range(len(self.overlap_fq_list)))
-    #     else:
-    #         for i in range(len(self.overlap_fq_list)):
-    #             self.run_overlap_single(i)
-
-
-    ################################
     # stat: 1U_10A
     ################################
     # worker: for single fx
@@ -606,9 +574,16 @@ class pipe(object):
     def run_count_fx_single(self, i):
         """Stat fq for single file/dir
         wrap fq_stat.toml for dir
+        # fix: 00.raw_data, 01.clean_data
         """
+        # Fix
+        fix_dirs = ['00.raw_data', '01.clean_data']
         i_dir = self.count_dir_list[i]
-        count_fx_dir(i_dir, collapsed=True) # save to fname.fq_stat.toml
+        i_dir = os.path.normpath(i_dir)
+        i_cmp = i_dir.split(os.sep)
+        collapsed = i_cmp[-1] in fix_dirs or i_cmp[-2] in fix_dirs
+        collapsed = not collapsed # reverse
+        count_fx_dir(i_dir, collapsed) # save to fname.fq_stat.toml
 
 
     def run_count_fx(self):
@@ -951,7 +926,6 @@ def overlap_fq2(query, subject, outdir=None, mm=0, range=[8, 25]):
         return out_fq
 
 
-
 class OverlapFq(object):
     """Check fastq overlap
     # 1. convert subject to fasta / collapse
@@ -1120,7 +1094,6 @@ class OverlapFq(object):
         return self.out_fq
 
 
-
 def main():
     args = get_args()
 
@@ -1138,7 +1111,8 @@ def main():
     else:
         pass
 
-    if len(args.subject_list) > 0:
+    # if len(args.subject_list) > 0:
+    if isinstance(args.subject_list, list):
         for sub in args.subject_list:
             args.subject = sub
             args.force_overlap = True

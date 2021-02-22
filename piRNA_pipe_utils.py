@@ -506,7 +506,9 @@ def bam_to_bed(bam, bed=None):
     if file_exists(bed):
         log.info('file exists, bam_to_bed() skipped: {}'.format(os.path.basename(bam)))
     else:
-        pybedtools.BedTool(bam).bam_to_bed().saveas(bed)
+        # pybedtools.BedTool(bam).bam_to_bed().saveas(bed)
+        cmd = 'bedtools bamtobed -i {} > {}'.format(bam, bed)
+        os.system(cmd)
 
 
 def bam_to_fq(bam, fq=None):
@@ -573,10 +575,11 @@ def align_both(fq, index, outdir, k=1, threads=4, gzipped=True, rm_tmp=False):
         'bowtie {} -k {} -S -v 2'.format(para, k),
         '--best -p {}'.format(threads),
         '--un {}'.format(unmap_fq),
-        '{} {}'.format(index, fq),
+        '-x {} {}'.format(index, fq),
         '2> {}'.format(align_log),
         '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(bam)])
+        '| samtools sort -o {} -'.format(bam),
+        '&& samtools index {}'.format(bam)])
 
     cmd_sh = os.path.join(outdir, 'cmd.sh')
     with open(cmd_sh, 'wt') as w:
@@ -625,10 +628,11 @@ def align_uniq(fq, index, outdir, threads=4, gzipped=True, rm_tmp=False):
     cmd = ' '.join([
         'bowtie {} -m 1 -S -v 2'.format(para),
         '--un {} --best -p {}'.format(unmap_fq, threads),
-        '{} {}'.format(index, fq),
+        '-x {} {}'.format(index, fq),
         '2> {}'.format(align_log),
         '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(bam)])
+        '| samtools sort -o {} -'.format(bam),
+        '&& samtools index {}'.format(bam)])
     # save
     cmd_sh = os.path.join(outdir, 'cmd.sh')
     with open(cmd_sh, 'wt') as w:
@@ -673,10 +677,11 @@ def align_multi(fq, index, outdir, threads=4, gzipped=True):
     both_cmd = ' '.join([
         'bowtie {} -k 2 -S -v 2'.format(para),
         '--no-unal --best -p {}'.format(threads),
-        '{} {}'.format(index, fq),
+        '-x {} {}'.format(index, fq),
         '2> {}'.format(both_log),
         '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(both_bam)])
+        '| samtools sort -o {} -'.format(both_bam),
+        '&& samtools index {}'.format(both_bam)])
     # save
     cmd_sh = os.path.join(outdir, 'cmd.sh')
     with open(cmd_sh, 'wt') as w:
