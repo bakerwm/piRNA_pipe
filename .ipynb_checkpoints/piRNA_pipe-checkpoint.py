@@ -1041,7 +1041,7 @@ class OverlapFq(object):
             '-p {}'.format(self.threads),
             '-l 23 -n 3',
             '--no-unal',
-            '-x {}'.format(self.s_index),
+            '{}'.format(self.s_index),
             '{}'.format(self.query),
             '2>{}'.format(self.q_align_log),
             '| samtools view -bhS -',
