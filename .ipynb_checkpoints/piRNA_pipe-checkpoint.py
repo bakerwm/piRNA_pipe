@@ -70,6 +70,9 @@ import Levenshtein
 from multiprocessing import Pool
 from xopen import xopen
 from hiseq.trim.trimmer import Trim
+from hiseq.fragsize.fragsize import BamFragSize
+from hiseq.utils.helper import listfile
+from hiseq.utils.seq import Fastx
 from piRNA_pipe_utils import *
 
 
@@ -103,8 +106,8 @@ def get_args():
     parser.add_argument('-w', '--workflow', type=int, default=1,
         help='workflow, 1:4, 1:TE->piRC->Genome; 2:TE->Genome; \
         3:piRC->TE->Genome; 4:piRC->Genome;  default: [1]')
-    parser.add_argument('-c', '--collapse', action='store_true',
-        help='collapse fastq reads')
+    # parser.add_argument('-c', '--collapse', action='store_true',
+    #     help='collapse fastq reads')
     parser.add_argument('-t', '--trimmed', action='store_true',
         help='Input file was clean data, no need to trim adapters')
     parser.add_argument('--subject', default=None,
@@ -139,8 +142,8 @@ def get_args():
 
 
 class pipeConfig(object):
-    """Prepare data for piRNA analysis
-
+    """
+    Check arguments, default arguments
     1. index: structureRNA, miRNA, TE, piRNA_cluster, genome, ...
     2. outputdir
     3. pipeline version
@@ -152,6 +155,7 @@ class pipeConfig(object):
 
     def init_args(self):
         args_local = {
+            'fx_in': None,
             'outdir': None,
             'smp_name': None,
             'genome': 'dm6',
@@ -161,20 +165,47 @@ class pipeConfig(object):
             'workflow': 1,
             'trimmed': True,
             'force_overlap': False,
-            'ov_type': 1
+            'subject': None,
+            'ov_type': 1,
+            'genome_path': '~/data/genome'
         }
         self = update_obj(self, args_local, force=False)
-        if self.outdir == None:
-            self.outdir = str(pathlib.Path.cwd())
-        check_path(self.outdir)
-
-        if self.smp_name == None:
+        
+        # smp_name, outdir, ...
+        if isinstance(self.fq, 'str'):
+            if not os.path.exists(self.fq):
+                raise ValueError('fq not exists: {}'.format(self.fq))
+        else:
+            raise ValueError('fq expect str, not {}'.format(
+                type(self.fq).__name))
+        # smp_name
+        if not isinstance(self.smp_name, 'str'):
             self.smp_name = fq_name(self.fq, pe_fix=True)
-        self.fq_name = self.smp_name + '.fq.gz' # output file
+        self.fq_name = self.smp_name + '.fq.gz' # force fastq output
+        # outdir
+        if not isinstance(self.outdir, 'str'):
+            self.outdir = str(pathlib.Path.cwd())
+        self.outdir = os.path.join(self.outdir, self.smp_name) # update: outdir
+        self.outdir = file_abspath(self.outdir)
+        # extra arguments
+        if not isinstance(self.genome, 'str'):
+            raise ValueError('genome, expect str, not {}'.format(
+                type(self.genome).__name__))
+        # threads, parallel_jobs, collapse, trimmed, ...
+        
+        # update files
+        self.init_overlap()
+        self.init_index()
+        self.init_dirs()
+        self.init_files()
 
+    
+    def init_overlap(self):
+        """Check the extra arguments, for overlap
+        subject
+        overlap
+        """        
         # subject, fastq for bowtie index
-        # subject_index
-        # *.1.ebwt
         if isinstance(self.subject, str):
             if file_exists(self.subject):
                 pass
@@ -182,20 +213,6 @@ class pipeConfig(object):
                 pass
             else:
                 self.subject = None
-        else:
-            self.subject = None
-
-        # if isinstance(self.subject_index, str):
-        #     if file_exists(self.subject_index + '.1.ebwt'):
-        #         pass
-        #     else:
-        #         self.subject_index = None
-        # else:
-        #     self.subject_index = None
-
-        # output
-        self.outdir = os.path.join(self.outdir, self.smp_name)
-
         # overlap dir
         if self.force_overlap and isinstance(self.subject, str):
             if file_exists(self.subject+'.1.ebwt'):
@@ -209,45 +226,43 @@ class pipeConfig(object):
             )
         else:
             self.subject = None # force not subject
-        self.outdir = file_abspath(self.outdir)
+        
 
-        # update files
-        self.init_dirs()
-        self.init_files()
-
-
-    def init_files(self):
-        index_dir = ''.join([
-            '/home/wangming/data/genome/',
-            '{}'.format(self.genome),
-            '/bowtie_index'
-            ])
-        args_f = {
-            'index_dir': index_dir,
+    def init_index(self):
+        """Checkt the bowtie indexes
+        genome_path: ~/data/genome (default)
+        require: smRNA, miRNA, te, piRC, genome
+        """
+        index_dir = os.path.join(self.genome_path, self.genome, 'bowtie_index')
+        if not os.path.exists(index_dir): 
+            raise ValueError('genome_path not exists: {}'.format(index_dir))
+        self.index_dir = index_dir
+        arg_index = {
             'smRNA_index': index_dir + '/smRNA',
             'miRNA_index': index_dir + '/hairpin',
             'te_index': index_dir + '/te',
             'piRC_index': index_dir + '/piRNA_cluster',
-            'genome_index': index_dir + '/' + self.genome,
-            'config_toml': self.config_dir + '/config.toml'
+            'genome_index': index_dir + '/' + self.genome
         }
-        self = update_obj(self, args_f, force=True)
-
+        # check index exists
+        fc = []
+        for k, v in arg_index.items():
+            f = v + '.1.ebwt'
+            ff = 'ok' if os.path.exists(f) else 'failed'
+            fc.append(ff == 'ok') # check
+            msg = '{:>15s}: {:<6s} {:s}'.format(k, ff, v)
+            print(msg)
+        if not all(fc):
+            raise ValueError('Missing indexes, check above message')
+        self = update_obj(self, arg_index, force=True)
+        
 
     def init_dirs(self):
         """The directory structure
-        00.total
-        01.collapse
-        02.smRNA
-        03.miRNA
-        04.size_select
-        05.TE (could be: piRNA_cluster, ...)
-        06.genome
-        07.unmap
-        08.stat
+        updated: 2021-01-10
         """
         arg_dirs = {
-            'config_dir': self.outdir + 'config',
+            'config_dir': self.outdir + '/config',
             'raw_dir': self.outdir + '/00.raw_data', 
             'clean_dir': self.outdir + '/01.clean_data',
             'collapse_dir': self.outdir + '/02.collapse',
@@ -264,23 +279,17 @@ class pipeConfig(object):
             'report_dir': self.outdir + '/12.report'
         }
         self = update_obj(self, arg_dirs, force=True)
-
-        check_path([
-            self.raw_dir,
-            self.overlap_dir,
-            self.clean_dir,
-            self.collapse_dir,
-            self.smRNA_dir,
-            self.miRNA_dir,
-            self.size_dir,
-            self.size_ex_dir,
-            self.te_dir,
-            self.piRC_dir,
-            self.genome_dir,
-            self.unmap_dir,
-            self.stat_dir,
-            self.report_dir
-            ])
+        check_path(list(arg_dirs.values()))
+        
+            
+    def init_files(self):
+        """Default files
+        config.toml
+        ...
+        """
+        arg_files = {
+            'config_toml': self.config_dir + '/config.toml'
+        }
 
 
 class pipe(object):
@@ -360,7 +369,7 @@ class pipe(object):
         fq_collapse = os.path.join(self.collapse_dir, self.fq_name)
         if self.collapse:
             out_fq = collapse_fx(fq, fq_collapse)
-            file_symlink(out_fq, fq_collapse)
+            # file_symlink(out_fq, fq_collapse)
         else:
             file_symlink(fq, fq_collapse)
         self.fx_not_empty(fq_collapse, 'run_collapse', exit=True)
@@ -536,38 +545,6 @@ class pipe(object):
 
 
     ################################
-    # Check overlap between subject file
-    # group=overlap,collapse,...
-    ################################
-    # # worker: for single fx
-    # def run_overlap_single(self, i):
-    #     """Check single fastq, overlap with subject
-    #     Input fastq
-    #     """
-    #     fx = self.overlap_fq_list[i]
-    #     outdir = os.path.join(os.path.dirname(fx), 'overlap')
-    #     overlap_fq(fx, self.subject, outdir)
-
-
-    # def run_overlap(self):
-    #     """Check fastq files overlap with subject
-    #     Create overlap dir
-    #     output overlap files
-    #     """
-    #     # all fastq files, to compare
-    #     self.overlap_fq_list = self.get_sub_fx(u1a10=False) # level-1: 00.raw_data 
-    #     self.overlap_fq_list = [i for i in self.overlap_fq_list \
-    #         if check_file(i, emptycheck=True)]
-    #     # multi threads
-    #     if len(self.overlap_fq_list) > 1 and self.parallel_jobs > 1:
-    #         with Pool(processes=self.parallel_jobs) as pool:
-    #             pool.map(self.run_overlap_single, range(len(self.overlap_fq_list)))
-    #     else:
-    #         for i in range(len(self.overlap_fq_list)):
-    #             self.run_overlap_single(i)
-
-
-    ################################
     # stat: 1U_10A
     ################################
     # worker: for single fx
@@ -606,9 +583,16 @@ class pipe(object):
     def run_count_fx_single(self, i):
         """Stat fq for single file/dir
         wrap fq_stat.toml for dir
+        # fix: 00.raw_data, 01.clean_data
         """
+        # Fix
+        fix_dirs = ['00.raw_data', '01.clean_data']
         i_dir = self.count_dir_list[i]
-        count_fx_dir(i_dir, collapsed=True) # save to fname.fq_stat.toml
+        i_dir = os.path.normpath(i_dir)
+        i_cmp = i_dir.split(os.sep)
+        collapsed = i_cmp[-1] in fix_dirs or i_cmp[-2] in fix_dirs
+        collapsed = not collapsed # reverse
+        count_fx_dir(i_dir, collapsed) # save to fname.fq_stat.toml
 
 
     def run_count_fx(self):
@@ -803,6 +787,49 @@ class pipe(object):
 
 
     ################################
+    # fragment length distribution
+    ################################
+    def run_fragsize_single(self, i):
+        """Stat read size for BAM/fx
+        save as .csv file
+
+        >fragsize.csv
+        length strand count
+        """
+        x = self.fragsize_files[i]
+        x_name, x_ext = os.path.splitext(x)
+        if x[-3:] == '.gz':
+            x_name = os.path.splitext(x_name)[0]
+        csv_file = x_name + '.fragsize.csv'
+        if x_ext == '.bam':
+            BamFragSize(x, asPE=False, strandness=True).saveas(csv_file)
+        elif x_ext == '.gz':
+            Fastx(x).len_dist(csv_file=csv_file)
+        else:
+            pass
+    
+
+    def run_fragsize(self):
+        """List all bam files
+        *.bam files
+        *.fq.gz files
+        """
+        bam_list = listfile(self.outdir, "*.bam", recursive=True)
+        sub_dirs = listdir(self.outdir, include_dir=True)
+        fx_lists = [listfile(i, "*.gz", recursive=False) for i in sub_dirs]
+        fx_list = [i for sub in fx_lists for i in sub]
+        self.fragsize_files = bam_list + fx_list
+        # multi threads
+        if len(self.fragsize_files ) > 1 and self.parallel_jobs > 1:
+            with Pool(processes=self.parallel_jobs) as pool:
+                pool.map(self.run_fragsize_single, 
+                    range(len(self.fragsize_files)))
+        else:
+            for x in range(len(self.fragsize_files)):
+                self.run_fragsize_single(x)
+
+
+    ################################
     # Post analysis
     ################################
     def run_post_analysis(self):
@@ -817,6 +844,7 @@ class pipe(object):
         self.run_1u10a()
         self.run_count_fx()
         self.run_qc_fn()
+        self.run_fragsize()
         ##### self.run_qc_vn() # skipped, time
 
 
@@ -912,46 +940,6 @@ def overlap_fq(query, subject, outdir=None, threads=4):
         return out_fq
 
 
-# failed
-# debug required
-# !!!
-def overlap_fq2(query, subject, outdir=None, mm=0, range=[8, 25]):
-    """Check overlap between fastq files, by sequence, allow mismatch 
-    query: small size
-    subject: bigger size
-    rules:
-    allow mismatch in 8-25 nt: range
-    number of mismatches:
-    """
-    if not isinstance(outdir, str):
-        outdir = os.path.dirname(query)
-    if not check_file([query, subject], emptycheck=True):
-        log.warning('file not exists, or empty: {}, {}'.format(query, subject))
-    else:
-        check_path(outdir)
-        out_fq = os.path.join(outdir, os.path.basename(query))
-        out_log = os.path.join(outdir, 'cmd.log')
-        out_cmd = os.path.join(outdir, 'cmd.sh')
-        if mm == 0:
-            out_fq = overlap_fq(query, subject, outdir)
-        else:
-            # collapse query, subject
-            with xopen(query, 'rt') as r1, xopen(subject, 'rt') as r2, \
-                xopen(out_fq, 'wt') as w:
-                for d1 in readfq(r1):
-                    w.write('\n'.join(d1)+'\n')
-                # for n, s, q, m in readfq(r1):
-                #     b = '\n'.join(['@'+n,s,'+',q])
-                    # a1 = s[range[0]:range[1]]
-                    # for n2, s2, q2, m2 in readfq(r2):
-                    #     a2 = s[range[0]:range[1]]
-                    #     h = Levenshtein.distance(a1, a2)
-                    #     if h <= mm:
-                    #         w.write(b+'\n')
-        return out_fq
-
-
-
 class OverlapFq(object):
     """Check fastq overlap
     # 1. convert subject to fasta / collapse
@@ -1041,7 +1029,7 @@ class OverlapFq(object):
             '-p {}'.format(self.threads),
             '-l 23 -n 3',
             '--no-unal',
-            '{}'.format(self.s_index),
+            '-x {}'.format(self.s_index),
             '{}'.format(self.query),
             '2>{}'.format(self.q_align_log),
             '| samtools view -bhS -',
@@ -1120,7 +1108,6 @@ class OverlapFq(object):
         return self.out_fq
 
 
-
 def main():
     args = get_args()
 
@@ -1138,7 +1125,8 @@ def main():
     else:
         pass
 
-    if len(args.subject_list) > 0:
+    # if len(args.subject_list) > 0:
+    if isinstance(args.subject_list, list):
         for sub in args.subject_list:
             args.subject = sub
             args.force_overlap = True
