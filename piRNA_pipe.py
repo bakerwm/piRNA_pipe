@@ -142,8 +142,8 @@ def get_args():
 
 
 class pipeConfig(object):
-    """Prepare data for piRNA analysis
-
+    """
+    Check arguments, default arguments
     1. index: structureRNA, miRNA, TE, piRNA_cluster, genome, ...
     2. outputdir
     3. pipeline version
@@ -155,6 +155,7 @@ class pipeConfig(object):
 
     def init_args(self):
         args_local = {
+            'fx_in': None,
             'outdir': None,
             'smp_name': None,
             'genome': 'dm6',
@@ -164,20 +165,47 @@ class pipeConfig(object):
             'workflow': 1,
             'trimmed': True,
             'force_overlap': False,
-            'ov_type': 1
+            'subject': None,
+            'ov_type': 1,
+            'genome_path': '~/data/genome'
         }
         self = update_obj(self, args_local, force=False)
-        if self.outdir == None:
-            self.outdir = str(pathlib.Path.cwd())
-        check_path(self.outdir)
-
-        if self.smp_name == None:
+        
+        # smp_name, outdir, ...
+        if isinstance(self.fq, 'str'):
+            if not os.path.exists(self.fq):
+                raise ValueError('fq not exists: {}'.format(self.fq))
+        else:
+            raise ValueError('fq expect str, not {}'.format(
+                type(self.fq).__name))
+        # smp_name
+        if not isinstance(self.smp_name, 'str'):
             self.smp_name = fq_name(self.fq, pe_fix=True)
-        self.fq_name = self.smp_name + '.fq.gz' # output file
+        self.fq_name = self.smp_name + '.fq.gz' # force fastq output
+        # outdir
+        if not isinstance(self.outdir, 'str'):
+            self.outdir = str(pathlib.Path.cwd())
+        self.outdir = os.path.join(self.outdir, self.smp_name) # update: outdir
+        self.outdir = file_abspath(self.outdir)
+        # extra arguments
+        if not isinstance(self.genome, 'str'):
+            raise ValueError('genome, expect str, not {}'.format(
+                type(self.genome).__name__))
+        # threads, parallel_jobs, collapse, trimmed, ...
+        
+        # update files
+        self.init_overlap()
+        self.init_index()
+        self.init_dirs()
+        self.init_files()
 
+    
+    def init_overlap(self):
+        """Check the extra arguments, for overlap
+        subject
+        overlap
+        """        
         # subject, fastq for bowtie index
-        # subject_index
-        # *.1.ebwt
         if isinstance(self.subject, str):
             if file_exists(self.subject):
                 pass
@@ -185,20 +213,6 @@ class pipeConfig(object):
                 pass
             else:
                 self.subject = None
-        else:
-            self.subject = None
-
-        # if isinstance(self.subject_index, str):
-        #     if file_exists(self.subject_index + '.1.ebwt'):
-        #         pass
-        #     else:
-        #         self.subject_index = None
-        # else:
-        #     self.subject_index = None
-
-        # output
-        self.outdir = os.path.join(self.outdir, self.smp_name)
-
         # overlap dir
         if self.force_overlap and isinstance(self.subject, str):
             if file_exists(self.subject+'.1.ebwt'):
@@ -212,45 +226,43 @@ class pipeConfig(object):
             )
         else:
             self.subject = None # force not subject
-        self.outdir = file_abspath(self.outdir)
+        
 
-        # update files
-        self.init_dirs()
-        self.init_files()
-
-
-    def init_files(self):
-        index_dir = ''.join([
-            '/home/wangming/data/genome/',
-            '{}'.format(self.genome),
-            '/bowtie_index'
-            ])
-        args_f = {
-            'index_dir': index_dir,
+    def init_index(self):
+        """Checkt the bowtie indexes
+        genome_path: ~/data/genome (default)
+        require: smRNA, miRNA, te, piRC, genome
+        """
+        index_dir = os.path.join(self.genome_path, self.genome, 'bowtie_index')
+        if not os.path.exists(index_dir): 
+            raise ValueError('genome_path not exists: {}'.format(index_dir))
+        self.index_dir = index_dir
+        arg_index = {
             'smRNA_index': index_dir + '/smRNA',
             'miRNA_index': index_dir + '/hairpin',
             'te_index': index_dir + '/te',
             'piRC_index': index_dir + '/piRNA_cluster',
-            'genome_index': index_dir + '/' + self.genome,
-            'config_toml': self.config_dir + '/config.toml'
+            'genome_index': index_dir + '/' + self.genome
         }
-        self = update_obj(self, args_f, force=True)
-
+        # check index exists
+        fc = []
+        for k, v in arg_index.items():
+            f = v + '.1.ebwt'
+            ff = 'ok' if os.path.exists(f) else 'failed'
+            fc.append(ff == 'ok') # check
+            msg = '{:>15s}: {:<6s} {:s}'.format(k, ff, v)
+            print(msg)
+        if not all(fc):
+            raise ValueError('Missing indexes, check above message')
+        self = update_obj(self, arg_index, force=True)
+        
 
     def init_dirs(self):
         """The directory structure
-        00.total
-        01.collapse
-        02.smRNA
-        03.miRNA
-        04.size_select
-        05.TE (could be: piRNA_cluster, ...)
-        06.genome
-        07.unmap
-        08.stat
+        updated: 2021-01-10
         """
         arg_dirs = {
-            'config_dir': self.outdir + 'config',
+            'config_dir': self.outdir + '/config',
             'raw_dir': self.outdir + '/00.raw_data', 
             'clean_dir': self.outdir + '/01.clean_data',
             'collapse_dir': self.outdir + '/02.collapse',
@@ -267,23 +279,17 @@ class pipeConfig(object):
             'report_dir': self.outdir + '/12.report'
         }
         self = update_obj(self, arg_dirs, force=True)
-
-        check_path([
-            self.raw_dir,
-            self.overlap_dir,
-            self.clean_dir,
-            self.collapse_dir,
-            self.smRNA_dir,
-            self.miRNA_dir,
-            self.size_dir,
-            self.size_ex_dir,
-            self.te_dir,
-            self.piRC_dir,
-            self.genome_dir,
-            self.unmap_dir,
-            self.stat_dir,
-            self.report_dir
-            ])
+        check_path(list(arg_dirs.values()))
+        
+            
+    def init_files(self):
+        """Default files
+        config.toml
+        ...
+        """
+        arg_files = {
+            'config_toml': self.config_dir + '/config.toml'
+        }
 
 
 class pipe(object):
