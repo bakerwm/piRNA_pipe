@@ -68,6 +68,236 @@ from hiseq.utils.helper import *
 from hiseq.utils.seq import Fastx
 
 
+
+class OverlapFq(object):
+    """Check fastq overlap
+    query, 
+    subject,
+    outdir,
+    
+    map query to subject using bowtie, check mutations by 'MD' tag
+    
+    1. convert subject to fasta / collapse
+    2. trim to 30 nt
+    3. build bowtie-index
+    4. alignment
+    5. filter bam MD: tag in sam file
+    6. return the query sequence
+    """
+    def __init__(self, **kwargs):
+        self = update_obj(self, kwargs, force=True)
+        self.init_args()
+
+
+    def init_args(self):
+        args_init = {
+            'query': None,
+            'subject': None,
+            'outdir': None,
+            'mm': 2,
+            'mm_range': [5, 28],
+            'threads': 4
+        }
+        self = update_obj(self, args_init, force=False)
+
+        if self.query == None or self.subject == None:
+            raise Exception('query, subject required')
+
+        if self.outdir == None:
+            self.outdir = str(pathlib.Path.cwd())
+
+        # files
+        s_dir = os.path.join(self.outdir, 'index')
+        if self.is_bowtie_index(self.subject):
+            self.s_name = os.path.basename(self.subject)
+            self.s_index = self.subject
+        else:
+            self.s_name = fq_name(self.subject)
+            self.s_fa = os.path.join(s_dir, self.s_name+'.fa')
+            self.s_index = os.path.join(s_dir, self.s_name)
+        # other files
+        self.q_name = fq_name(self.query)
+        self.q_bam = os.path.join(self.outdir, self.q_name+'.align.bam')
+        self.q_bam_filt = self.q_bam.replace('.bam', '.filt.bam')
+        self.q_align_log = os.path.join(self.outdir, self.q_name+'.align.log')
+        self.out_fq_plain = os.path.join(self.outdir, self.q_name+'.fq') # gzip
+        self.out_fq = self.out_fq_plain + '.gz'
+
+        # dirs
+        check_path(s_dir)
+
+
+    def is_bowtie_index(self, x):
+        if isinstance(x, str):
+            return file_exists(x+'.1.ebwt')
+
+
+    def prep_index(self):
+        """Collapse, index
+        bowtie-build
+        """
+        if self.is_bowtie_index(self.subject):
+            log.info('prep_index() skipped, subject is bowtie index')
+        else:
+            #1.collapse
+            if not file_exists(self.s_fa):
+                Fastx(self.subject).collapse(self.s_fa, fq_out=False)
+
+            #2.build bowtie index
+            cmd = ' '.join([
+                'bowtie-build -q',
+                '--threads {}'.format(self.threads),
+                '{}'.format(self.s_fa),
+                '{}'.format(self.s_index)
+            ])
+            if not self.is_bowtie_index(self.s_index):
+                run_shell_cmd(cmd)
+
+
+    def run_align(self):
+        """Align query to subject
+        bowtie -v 2 -S -k 1 -v 2 -l 23 -n 3
+        """
+        cmd = ' '.join([
+            'bowtie -S -k 1 -v 2',
+            '-p {}'.format(self.threads),
+            '-l 23 -n 3',
+            '--no-unal',
+            '-x {}'.format(self.s_index),
+            '{}'.format(self.query),
+            '2>{}'.format(self.q_align_log),
+            '| samtools view -bhS -',
+            '| samtools sort -o {} -'.format(self.q_bam),
+            '&& samtools index {}'.format(self.q_bam)
+        ])
+        if not file_exists(self.q_bam):
+            run_shell_cmd(cmd)
+
+
+#     def check_align(self, x):
+#         """Check MD in sam record
+#         make sure MD:Z:20G0G6 
+#         mutations at 5-28 ranges
+#         mm <=3
+#         x AlignedSegment
+#         """
+#         f = False
+#         if isinstance(x, pysam.AlignedSegment):
+#             if x.qstart == 0 and x.qstart == x.reference_start:
+#                 md = [i[1] for i in x.tags if i[0] == 'MD'] # ['28G0G1'], ['29']
+#                 if len(md) == 1:
+#                     # mismatches ?!
+#                     mm = re.findall('[ACGT]', md[0])
+#                     p = re.split('[ACGTN]', md[0]) # '[^0-9]'
+#                     if len(mm) <= self.mm:
+#                         f = True # mismatches
+#                     if len(p) > 1:
+#                         px = sum(list(map(int, p))[:-1]) # remove last one
+#                         f = px in range(self.mm_range[0], self.mm_range[1])
+#                     else:
+#                         f = True # ?
+#         return f
+
+
+    def check_align(self, x):
+        """Check MD in sam record
+        make sure MD:Z:20G0G6 
+        mutations at 5-28 ranges
+        mm <=3
+        x AlignedSegment
+        """
+        f = False
+        if isinstance(x, pysam.AlignedSegment):
+            print(x.qstart, x.reference_start)
+            if x.qstart == 0 and x.qstart == x.reference_start:
+                md = [i[1] for i in x.tags if i[0] == 'MD'] # ['28G0G1'], ['29']
+                if len(md) == 1:
+                    # mismatches ?!
+                    print('AAAA-1')
+                    mm = re.findall('[ACGT]', md[0])
+                    p = re.split('[ACGTN]', md[0]) # '[^0-9]'
+                    if len(mm) <= self.mm:
+                        print('AAAA-2')
+                        f = True # mismatches
+                    if len(p) > 1:
+                        print('AAAA-3')
+                        px = sum(list(map(int, p))[:-1]) # remove last one
+                        f = px in range(self.mm_range[0], self.mm_range[1])
+                    else:
+                        f = True # ?
+        return f
+
+
+    def run_filter(self):
+        """Filt alignments, mismatches within range[]
+        pysam.AlignmentFiles()
+        """
+        samfile = pysam.AlignmentFile(self.q_bam, 'rb')
+        if not file_exists(self.q_bam_filt):
+            destfile = pysam.AlignmentFile(self.q_bam_filt, 'wb', 
+                template=samfile)
+            for r in samfile:
+                if self.check_align(r):
+                    destfile.write(r)
+
+
+    def save_to_fq(self):
+        """Save filt bam file, to fastq format
+        out_fq
+        """
+        if not file_exists(self.out_fq_plain):
+            cmd = ' '.join([
+                'samtools fastq',
+                '-@ {}'.format(self.threads),
+                '{}'.format(self.q_bam_filt),
+                '| gzip > {}'.format(self.out_fq)
+            ])
+            run_shell_cmd(cmd)
+            # pysam.fastq('-@', '{}'.format(self.threads),
+            #     '-s', self.out_fq_plain, 
+            #     self.q_bam_filt, save_stdout=self.out_fq_plain)
+
+        # if not file_exists(self.out_fq):
+        #     gzip_cmd(self.out_fq_plain, self.out_fq, decompress=False)
+        
+    
+    def stat(self):
+        """Stat, overlap reads, input reads"""
+        query_c = Fastx(self.query).number_of_seq()
+        ov_c = Fastx(self.out_fq).number_of_seq()
+        ov_pct = ov_c/query_c*100
+        # message
+        msg = 'query: {}, overlap: {}, percent: {:.2f}%'.format(
+            query_c, ov_c, ov_pct
+        )
+        print(msg)
+        return (query_c, ov_c, ov_pct)        
+
+
+    def run(self):
+        self.prep_index()
+        self.run_align()
+        self.run_filter()
+        self.save_to_fq()
+        self.stat()
+        return self.out_fq
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ################################################################################
 def collapse_fx(fx_in, fx_out):
     """
