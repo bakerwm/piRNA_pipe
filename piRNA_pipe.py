@@ -70,6 +70,9 @@ import Levenshtein
 from multiprocessing import Pool
 from xopen import xopen
 from hiseq.trim.trimmer import Trim
+from hiseq.fragsize.fragsize import BamFragSize
+from hiseq.utils.helper import listfile
+from hiseq.utils.seq import Fastx
 from piRNA_pipe_utils import *
 
 
@@ -778,6 +781,49 @@ class pipe(object):
 
 
     ################################
+    # fragment length distribution
+    ################################
+    def run_fragsize_single(self, i):
+        """Stat read size for BAM/fx
+        save as .csv file
+
+        >fragsize.csv
+        length strand count
+        """
+        x = self.fragsize_files[i]
+        x_name, x_ext = os.path.splitext(x)
+        if x[-3:] == '.gz':
+            x_name = os.path.splitext(x_name)[0]
+        csv_file = x_name + '.fragsize.csv'
+        if x_ext == '.bam':
+            BamFragSize(x, asPE=False, strandness=True).saveas(csv_file)
+        elif x_ext == '.gz':
+            Fastx(x).len_dist(csv_file=csv_file)
+        else:
+            pass
+    
+
+    def run_fragsize(self):
+        """List all bam files
+        *.bam files
+        *.fq.gz files
+        """
+        bam_list = listfile(self.outdir, "*.bam", recursive=True)
+        sub_dirs = listdir(self.outdir, include_dir=True)
+        fx_lists = [listfile(i, "*.gz", recursive=False) for i in sub_dirs]
+        fx_list = [i for sub in fx_lists for i in sub]
+        self.fragsize_files = bam_list + fx_list
+        # multi threads
+        if len(self.fragsize_files ) > 1 and self.parallel_jobs > 1:
+            with Pool(processes=self.parallel_jobs) as pool:
+                pool.map(self.run_fragsize_single, 
+                    range(len(self.fragsize_files)))
+        else:
+            for x in range(len(self.fragsize_files)):
+                self.run_fragsize_single(x)
+
+
+    ################################
     # Post analysis
     ################################
     def run_post_analysis(self):
@@ -792,6 +838,7 @@ class pipe(object):
         self.run_1u10a()
         self.run_count_fx()
         self.run_qc_fn()
+        self.run_fragsize()
         ##### self.run_qc_vn() # skipped, time
 
 
