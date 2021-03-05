@@ -82,15 +82,16 @@ from hiseq.utils.seq import Fastx
 from piRNA_pipe_utils import *
 from align import Align
 from fastx import collapse_fx, split_fx, overlap_fx
-from utils import get_args, PipeConfig
+from utils import get_args, PipeConfig, get_fx_name
 from qc import PiRNApipeStat
+
 
 logging.basicConfig(
     format='[%(asctime)s %(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
     stream=sys.stdout)
 log = logging.getLogger(__name__)
-log.setLevel('INFO')
+log.setLevel('WARNING')
 
 
         
@@ -119,7 +120,6 @@ class PiRNApipe(object):
         self = update_obj(self, kwargs, force=True)
         args_local = PipeConfig(**self.__dict__)
         self = update_obj(self, args_local.__dict__, force=True)
-        # save config
         Config().to_toml(self.__dict__, self.config_toml)
 
 
@@ -295,6 +295,7 @@ class PiRNApipe(object):
             # create symlink, move-up level-1
             fq_dir = os.path.dirname(os.path.dirname(fout[1]))
             fq_align = os.path.join(fq_dir, os.path.basename(fout[1]))
+            print('!CCCC-1', )
             file_symlink(fout[1], fq_align)
             fout[1] = fq_align # update
         except:
@@ -349,7 +350,8 @@ def overlap_subject(p):
         args_local = p.__dict__
         if len(p.subject_list) > 0:
             for sub in p.subject_list:
-                s_name = fq_name(sub)
+                # s_name = fq_name(sub)
+                s_name = get_fx_name(sub)
                 args_ov = {
                     'fq': p.fq_collapse,
                     'trimmed': True,

@@ -16,6 +16,7 @@ import numpy as np
 from xopen import xopen
 from hiseq.utils.helper import * 
 from hiseq.utils.seq import Fastx
+from utils import get_fx_name
 
 
 logging.basicConfig(
@@ -74,8 +75,7 @@ class Align(object):
         self.outdir = file_abspath(self.outdir)
         # output
         self.f_type = Fastx(self.fx).format
-        self.f_name = fq_name(self.fx)
-        self.f_name = self.f_name.strip('.unmap')
+        self.f_name = get_fx_name(self.fx, fix_unmap=True)
                 
         
     def align(self, fx, outdir=None, fix_outdir=False):

@@ -9,6 +9,34 @@ import os
 import argparse
 from hiseq.utils.helper import * # update_obj, fq_name, file_abspath, check_path, check_file
 
+
+
+
+
+
+def get_fx_name(x, fix_unmap=True):
+    """Parse the name of fastx
+    a.fq
+    a.fq.gz
+    a.unmap.fq
+    a.unmap.fq.gz
+    """
+    if isinstance(x, str):
+        x_name = os.path.basename(x)
+        # remove .gz
+        if x_name[-3:] == '.gz':
+            x_name = x_name[:-3]
+        # remove ext:
+        x_name = os.path.splitext(x_name)[0]
+        # remove unmap
+        if x_name[-6:] == '.unmap' and fix_unmap:
+            x_name = x_name[:-6]
+        return x_name
+        
+
+
+
+
 def get_args():
     """
     require arguments:
@@ -33,7 +61,7 @@ def get_args():
     parser.add_argument('-t', '--trimmed', action='store_true',
                         help='No need to trim adapters')
     parser.add_argument('-s', '--subject-list', nargs='+', dest='subject_list',
-                        defult=[],
+                        default=[],
                         help='list of fastq files, for overlap, default: []')
     parser.add_argument('--ov-type', dest='ov_type', type=int, default=1,
                         help='overllap type, 1=perfect match, \

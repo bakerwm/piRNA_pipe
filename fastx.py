@@ -18,6 +18,7 @@ from xopen import xopen
 from multiprocessing import Pool
 from hiseq.utils.helper import * 
 from hiseq.utils.seq import Fastx
+from utils import get_fx_name
 
 
 
@@ -129,8 +130,19 @@ class FxCount(object):
         """Return the nmber of records
         seq
         """
-        n_seq = Fastx(x).number_of_seq()
-        return (n_seq, n_seq)  # unique, total
+#         n_seq = Fastx(x).number_of_seq()
+#         return (n_seq, n_seq)  # unique, total    
+        f = pyfastx.Fastx(x)
+        i = 0
+        s = []
+        for name,_,_,_ in f:
+            i += 1
+            try:
+                a,b = name.split('-', 1) # make sure, fastx_collapser output
+                s.append(int(b.lstrip('0')))
+            except:
+                s.append(1)
+        return (i, sum(s)) # unique, total
         
     
     def count_fa(self, x):
@@ -158,7 +170,8 @@ class FxCount(object):
     
     def count(self, x):
         """Count reads for fastx"""
-        x_name = fq_name(x)
+        # x_name = fq_name(x)
+        x_name = get_fx_name(x, fix_unmap=False)
         x_type = Fastx(x).format
         # save to file
         x_stat = os.path.join(os.path.dirname(x), x_name+'.fx_stat.toml')
@@ -226,7 +239,8 @@ class FxU1A10(object):
         V1_B10: not U1 and not A10
         see: IUPAC_code, http://www.bioinformatics.org/sms/iupac.html
         """
-        fname = fq_name(fx)
+        # fname = fq_name(fx)
+        x_name = get_fx_name(x, fix_unmap=False)
         if not check_file(fx, emptycheck=True):
             log.error('extract_u1a10() skipped, file not exists, or empty: {}'.format(fx))
             return None
@@ -344,7 +358,8 @@ def split_fx(fx, outdir=None, min=23, max=29, gzipped=True):
     """Split fastq file by the size 
     23-29 nt
     """
-    f_name = fq_name(fx)
+    # f_name = fq_name(fx)
+    x_name = get_fx_name(x, fix_unmap=False)
     f_type = Fastx(fx).format
     if outdir is None:
         outdir = os.path.join(os.path.dirname(fx), 'size_select')
