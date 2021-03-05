@@ -81,8 +81,8 @@ from hiseq.utils.helper import listfile
 from hiseq.utils.seq import Fastx
 from piRNA_pipe_utils import *
 from align import Align
-from fastx import collapse_fx, split_fx, overlap_fx
-from utils import get_args, PipeConfig, get_fx_name
+from fastx import collapse_fx, split_fx, overlap_fx, get_fx_name, fa_to_fq
+from utils import get_args, PipeConfig
 from qc import PiRNApipeStat
 
 
@@ -128,7 +128,14 @@ class PiRNApipe(object):
         split files into 1U,10A, add stat
         """
         log.info('00.Copy raw data')
-        file_symlink(fq, self.fq_raw)
+        #!!! make sure fastq format
+        fq_type = Fastx(fq).format
+        if fq_type == 'fastq':
+            file_symlink(fq, self.fq_raw)
+        elif fq_type == 'fasta':
+            fa_to_fq(fq, self.fq_raw)
+        else:
+            raise ValueError('prep_raw() failed, unknown file: {}'.format(fq))
         return self.fq_raw
 
 
@@ -164,14 +171,14 @@ class PiRNApipe(object):
         save read count in id line
         """
         log.info('02.Collapse fastq')
-        if self.collapse:
+        if self.collapsed:
+            file_symlink(fq, self.fq_collapse)
+        else:
             try:
                 out_fq = collapse_fx(fq, self.fq_collapse)
             except:
                 log.error('run_collapse() failed')
                 fq_collapse = None
-        else:
-            file_symlink(fq, self.fq_collapse)
         return self.fq_collapse
 
 
