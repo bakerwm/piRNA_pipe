@@ -69,6 +69,47 @@ from hiseq.utils.seq import Fastx
 
 
 
+
+
+################################################################################
+# selected functions
+def readfq(fh): # this is a generator function
+    """
+    source: https://github.com/lh3/readfq/blob/master/readfq.py
+    processing fastq file
+    """
+    last = None # this is a buffer keeping the last unprocessed line
+    while True: # mimic closure; is it a bad idea?
+        if not last: # the first record or a record following a fastq
+            for l in fh: # search for the start of the next record
+                if l[0] in '>@': # fasta/q header line
+                    last = l[:-1] # save this line
+                    break
+        if not last: break
+        [name, _, comment], seqs, last = last[1:].partition(" "), [], None
+        for l in fh: # read the sequence
+            if l[0] in '@+>':
+                last = l[:-1]
+                break
+            seqs.append(l[:-1])
+        if not last or last[0] != '+': # this is a fasta record
+            yield name, ''.join(seqs), None, comment # yield a fasta record
+            if not last: break
+        else: # this is a fastq record
+            seq, leng, seqs = ''.join(seqs), 0, []
+            for l in fh: # read the quality
+                seqs.append(l[:-1])
+                leng += len(l) - 1
+                if leng >= len(seq): # have read enough quality
+                    last = None
+                    yield name, seq, ''.join(seqs), comment; # yield a fastq record
+                    break
+            if last: # reach EOF before reading enough quality
+                yield name, seq, None, comment # yield a fasta record instead
+                break
+
+
+################################################################################
 class OverlapFq(object):
     """Check fastq overlap
     query, 
@@ -174,31 +215,6 @@ class OverlapFq(object):
             run_shell_cmd(cmd)
 
 
-#     def check_align(self, x):
-#         """Check MD in sam record
-#         make sure MD:Z:20G0G6 
-#         mutations at 5-28 ranges
-#         mm <=3
-#         x AlignedSegment
-#         """
-#         f = False
-#         if isinstance(x, pysam.AlignedSegment):
-#             if x.qstart == 0 and x.qstart == x.reference_start:
-#                 md = [i[1] for i in x.tags if i[0] == 'MD'] # ['28G0G1'], ['29']
-#                 if len(md) == 1:
-#                     # mismatches ?!
-#                     mm = re.findall('[ACGT]', md[0])
-#                     p = re.split('[ACGTN]', md[0]) # '[^0-9]'
-#                     if len(mm) <= self.mm:
-#                         f = True # mismatches
-#                     if len(p) > 1:
-#                         px = sum(list(map(int, p))[:-1]) # remove last one
-#                         f = px in range(self.mm_range[0], self.mm_range[1])
-#                     else:
-#                         f = True # ?
-#         return f
-
-
     def check_align(self, x):
         """Check MD in sam record
         make sure MD:Z:20G0G6 
@@ -298,40 +314,31 @@ class OverlapFq(object):
 
 
 
+
 ################################################################################
-def collapse_fx(fx_in, fx_out):
-    """
-    collapse fastx by seq
-    fx_out: could be : fastq/fasta, gz
-    """
-    outdir = os.path.dirname(fx_out)
-    check_path(outdir)
-    # check fa/fq
-    fx_name = os.path.basename(fx_out)
-    fx_name = fx_name.replace('.gz', '')
-    if fx_name.endswith('.fq') or fx_name.endswith('.fastq'):
-        fq_out = True
-    else:
-        fq_out = False
-    if file_exists(fx_out):
-        log.info('collapse_fx() skipped, file exists: {}'.format(fx_out))
-    else:
-        d = {}
-        with xopen(fx_in, 'rt') as r:
-            for n, s, q, m in readfq(r):
-                d[s] = d.get(s, 0) + 1
 
-        # sort by value (decreasing)
-        i = 0
-        with xopen(fx_out, 'wt') as w:
-            for k, v in sorted(d.items(), key=lambda item: item[1], reverse=True):
-                i += 1
-                out = '>{}-{}\n{}\n'.format(i, v, k)
-                if fq_out:
-                    out = '@{}-{}\n{}\n+\n{}\n'.format(i, v, k, 'I'*len(k))
-                w.write(out)
-    return fx_out
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################################################################################
+# deprecated functions
 
 def count_fx(fx, collapsed=False):
     """Count reads
@@ -511,42 +518,6 @@ def wrap_stat_fq(x, recursive=False):
                 df = df.set_index('file').to_dict() # .to_json(stat_json)
                 if len(df.keys()) > 0:
                     Toml(df).to_toml(stat_toml)
-
-
-def readfq(fh): # this is a generator function
-    """
-    source: https://github.com/lh3/readfq/blob/master/readfq.py
-    processing fastq file
-    """
-    last = None # this is a buffer keeping the last unprocessed line
-    while True: # mimic closure; is it a bad idea?
-        if not last: # the first record or a record following a fastq
-            for l in fh: # search for the start of the next record
-                if l[0] in '>@': # fasta/q header line
-                    last = l[:-1] # save this line
-                    break
-        if not last: break
-        [name, _, comment], seqs, last = last[1:].partition(" "), [], None
-        for l in fh: # read the sequence
-            if l[0] in '@+>':
-                last = l[:-1]
-                break
-            seqs.append(l[:-1])
-        if not last or last[0] != '+': # this is a fasta record
-            yield name, ''.join(seqs), None, comment # yield a fasta record
-            if not last: break
-        else: # this is a fastq record
-            seq, leng, seqs = ''.join(seqs), 0, []
-            for l in fh: # read the quality
-                seqs.append(l[:-1])
-                leng += len(l) - 1
-                if leng >= len(seq): # have read enough quality
-                    last = None
-                    yield name, seq, ''.join(seqs), comment; # yield a fastq record
-                    break
-            if last: # reach EOF before reading enough quality
-                yield name, seq, None, comment # yield a fasta record instead
-                break
 
 
 def split_fq_1u10a(fq, outdir=None, gzipped=True, remove=False):
@@ -784,315 +755,6 @@ def bam_to_fq(bam, fq=None):
 
         of.close()
 
-
-# unique + multi: k=1
-def align_both(fq, index, outdir, k=1, threads=4, gzipped=True, rm_tmp=False):
-    """
-    Align reads to index
-    could be: -k1
-    """
-    fname = filename(fq)
-    ftype = Fastx(fq).format # fasta/fastq
-    check_path(outdir)
-    # files
-    bam = os.path.join(outdir, '{}.bam'.format(fname))
-    align_log = os.path.join(outdir, '{}.bowtie.log'.format(fname))
-    map_fq = os.path.join(outdir, '{}.{}'.format(fname, ftype))
-    unmap_fq = os.path.join(outdir, '{}.unmap.{}'.format(fname, ftype))
-    para = '-f' if ftype == 'fasta' else '-q'
-    # unique + multiple (-k 1)
-    cmd = ' '.join([
-        'bowtie {} -k {} -S -v 2'.format(para, k),
-        '--best -p {}'.format(threads),
-        '--un {}'.format(unmap_fq),
-        '-x {} {}'.format(index, fq),
-        '2> {}'.format(align_log),
-        '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(bam),
-        '&& samtools index {}'.format(bam)])
-
-    cmd_sh = os.path.join(outdir, 'cmd.sh')
-    with open(cmd_sh, 'wt') as w:
-        w.write(cmd + '\n')
-    # run
-    if os.path.exists(bam):
-        log.info('file exixts, align() skipped: {}'.format(bam))
-    else:
-        os.system(cmd)
-    # output
-    if gzipped:
-        map_fq_gz = map_fq + '.gz'
-        unmap_fq_gz = unmap_fq + '.gz'
-        if file_exists(unmap_fq):
-            gzip_cmd(unmap_fq, unmap_fq_gz, decompress=False)
-        # convert to fq
-        bam_to_fq(bam, map_fq_gz)
-        map_fq_out, unmap_fq_out = [map_fq_gz, unmap_fq_gz]
-    else:
-        bam_to_fq(bam, map_fq)
-        map_fq_out, unmap_fq_out = [map_fq, unmap_fq]
-    # output
-    return [bam, map_fq_out, unmap_fq_out] # return gzipped files
-
-
-# unique: m=1
-def align_uniq(fq, index, outdir, threads=4, gzipped=True, rm_tmp=False):
-    """
-    Align reads to index
-    extract unique reads (-m 1)
-
-    unique: -m 1
-    multiple: -k 2, ids -> bam
-    """
-    fname = filename(fq)
-    ftype = Fastx(fq).format
-    check_path(outdir)
-    # files
-    bam = os.path.join(outdir, '{}.bam'.format(fname))
-    align_log = os.path.join(outdir, '{}.bowtie.log'.format(fname))
-    map_fq = os.path.join(outdir, '{}.{}'.format(fname, ftype))
-    unmap_fq = os.path.join(outdir, '{}.unmap.{}'.format(fname, ftype))
-    para = '-f' if ftype == 'fasta' else '-q'
-    ##-------------------##
-    # unique (-m 1) 
-    cmd = ' '.join([
-        'bowtie {} -m 1 -S -v 2'.format(para),
-        '--un {} --best -p {}'.format(unmap_fq, threads),
-        '-x {} {}'.format(index, fq),
-        '2> {}'.format(align_log),
-        '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(bam),
-        '&& samtools index {}'.format(bam)])
-    # save
-    cmd_sh = os.path.join(outdir, 'cmd.sh')
-    with open(cmd_sh, 'wt') as w:
-        w.write(cmd + '\n')
-    # run
-    if os.path.exists(bam):
-        log.info('file exists, align skipped: {}'.format(bam))
-    else:
-        os.system(cmd)
-    # output
-    if gzipped:
-        map_fq_gz = map_fq + '.gz'
-        unmap_fq_gz = unmap_fq + '.gz'
-        if file_exists(unmap_fq):
-            gzip_cmd(unmap_fq, unmap_fq_gz, decompress=False)
-        # convert to fq
-        bam_to_fq(bam, map_fq_gz)
-        map_fq_out, unmap_fq_out = [map_fq_gz, unmap_fq_gz]
-    else:
-        bam_to_fq(bam, map_fq)
-        map_fq_out, unmap_fq_out = [map_fq, unmap_fq]
-    return [bam, map_fq_out, unmap_fq_out] # gzipped output
-
-
-# multi: 
-def align_multi(fq, index, outdir, threads=4, gzipped=True):
-    """
-    Align reads to index
-    extract multiple reads (-k 2)
-
-    multiple: -k 2, ids -> bam
-    """
-    fname = filename(fq)
-    ftype = Fastx(fq).format
-    check_path(outdir)
-    ##-------------------##
-    ## unique + multi reads
-    both_bam = os.path.join(outdir, '{}.unique_multi_k2.bam'.format(fname))
-    both_log = os.path.join(outdir, '{}.unique_multi_k2.bowtie.log'.format(fname))
-    para = '-f' if ftype == 'fasta' else '-q'
-    # cmd
-    both_cmd = ' '.join([
-        'bowtie {} -k 2 -S -v 2'.format(para),
-        '--no-unal --best -p {}'.format(threads),
-        '-x {} {}'.format(index, fq),
-        '2> {}'.format(both_log),
-        '| samtools view -bhS -',
-        '| samtools sort -o {} -'.format(both_bam),
-        '&& samtools index {}'.format(both_bam)])
-    # save
-    cmd_sh = os.path.join(outdir, 'cmd.sh')
-    with open(cmd_sh, 'wt') as w:
-        w.write(both_cmd + '\n')
-    # run
-    if os.path.exists(both_bam):
-        log.info('file exists, align skipped: {}'.format(both_bam))
-    else:
-        os.system(both_cmd)
-    ##-------------------##
-    ## extract multi fq
-    multi_ids = os.path.join(outdir, '{}.multi.id.txt'.format(fname))
-    multi_fq = os.path.join(outdir, '{}.{}'.format(fname, ftype))
-    unmap_fq = os.path.join(outdir, '{}.unmap.{}'.format(fname, ftype))
-    multi_fq_gz = multi_fq + '.gz'
-    unmap_fq_gz = unmap_fq + '.gz'
-    ## cmd
-    get_multi_cmd = ' '.join([
-        'samtools view -F 0x4 {}'.format(both_bam),
-        '| cut -f 1 | sort | uniq -c',
-        '| awk \'$1>1 {print $2}\'',
-        '> {}'.format(multi_ids),
-        '&& seqkit grep -n -f {}'.format(multi_ids),
-        '{} > {}'.format(fq, multi_fq),
-        '&& seqkit grep -v -n -f {}'.format(multi_ids),
-        '{} > {}'.format(fq, unmap_fq)])
-    # save
-    cmd_multi_sh = os.path.join(outdir, 'cmd_multi.sh')
-    with open(cmd_multi_sh, 'wt') as w:
-        w.write(get_multi_cmd + '\n')
-    # run
-    if file_exists(multi_fq) or file_exists(multi_fq_gz):
-        log.info('file exists, align skipped: {}'.format(multi_fq))
-    else:
-        os.system(get_multi_cmd)
-    # gzip output
-    if gzipped:
-        if file_exists(multi_fq): # switch
-            gzip_cmd(multi_fq, multi_fq_gz, decompress=False)
-        if file_exists(unmap_fq):
-            gzip_cmd(unmap_fq, unmap_fq_gz, decompress=False)
-        multi_fq_out, unmap_fq_out = [multi_fq_gz, unmap_fq_gz]
-    else:
-        multi_fq_out, unmap_fq_out = [multi_fq, unmap_fq]
-    ##-------------------##
-    ## multi alignment/multi_bam
-    ## for bam/ -k 1 # only 1 alignment
-    multi_bam = os.path.join(outdir, '{}.bam'.format(fname))
-    if not file_exists(multi_bam):
-        tmp_dir = os.path.join(outdir, 'tmp')
-        tmp_bam, _, _ = align_both(multi_fq_out, index, tmp_dir, k=1, 
-            threads=threads, gzipped=gzipped) # 100% mapped
-        shutil.copy(tmp_bam, multi_bam)
-        shutil.rmtree(tmp_dir)
-    return [multi_bam, multi_fq_out, unmap_fq_out]
-
-
-def anno_bam(bam, outdir, genome='dm6'):
-    """
-    Annotate bam alignment, annotationPeaks.pl
-    """
-    fname = filename(bam)
-    check_path(outdir)
-
-    # exe
-    anno = shutil.which('annotatePeaks.pl')
-    if not anno:
-        log.info('anno_bam() skipped. annotatePeaks.pl not found in $PATH, \
-            install HOMER, add to PATH')
-        return None
-
-    # check input
-    if bam.endswith('.bed'):
-        bed = bam # not need
-    else:
-        # bed = os.path.join(outdir, fname + '.bed')
-        bed = os.path.splitext(bam)[0] + '.bed'
-        if not file_exists(bed):
-            bam_to_bed(bam, bed)
-    
-    # bed to anno
-    anno_stat = os.path.join(outdir, fname + '.anno.stat')
-    anno_txt = os.path.join(outdir, fname + '.anno.txt')
-    anno_log = os.path.join(outdir, fname + '.anno.log')
-
-    # run
-    anno_cmd = ' '.join([
-        '{} {} {}'.format(anno, bed, genome),
-        '-annStats {}'.format(anno_stat),
-        '1> {}'.format(anno_txt),
-        '2> {}'.format(anno_log)])
-
-    cmd_sh = os.path.join(outdir, 'cmd_anno.sh')
-    with open(cmd_sh, 'wt') as w:
-        w.write(anno_cmd + '\n') 
-
-    if file_exists(anno_txt):
-        log.info('file exists, anno_bam() skipped: {}'.format(fname))
-    else:
-        os.system(anno_cmd)
-
-    # combine anno + seq
-
-
-def merge_bed_byname(b1, b2, output=None, how='inner'):
-    """
-    Merge two bed files, by name
-
-    b1 bed file (bed6)
-    b2 bed file (bed6)
-    output if None, return the pd.DataFrame
-    how 'inner', 'outer', 'left', 'right' 
-    """
-    df1 = pybedtools.BedTool(b1).to_dataframe()
-    df2 = pybedtools.BedTool(b2).to_dataframe()
-    # merge
-    df = pd.merge(df1, df2, left_on='name', right_on='name', how=how)
-
-    if output is None:
-        return df
-    else:
-        df.to_csv(output, index=False, header=False)
-
-
-def pipe_align(fq, index, outdir, threads=4, genome='dm6', gzipped=True,
-    unique_multi='both', remove_1u10a=False):
-    """Align reads to unique, multiple 
-    unique_multi str unique, multi, both, all
-    """
-    f_name = fq_name(fq)
-    f_name = f_name.replace('.unmap', '') # remove suffix
-    fq_align = os.path.join(outdir, f_name + '.fastq.gz')
-
-    ## priority: both > unique > multi
-    ##---------------------------------------------------------##
-    # multi only
-    if unique_multi in ['multi', 'all']:
-        multi_dir = os.path.join(outdir, 'multi')
-        check_path(multi_dir)
-        multi_bam, multi_fq, multi_unmap = align_multi(fq, index, multi_dir, 
-            threads=4, gzipped=gzipped)
-        # annotation
-        anno_bam(multi_bam, multi_dir, genome)
-        multi_bam_list = split_bam_1u10a(multi_bam)
-        # output
-        fq_unmap = multi_unmap
-        file_symlink(multi_fq, fq_align)
-    
-    ##---------------------------------------------------------##
-    ## uniq only
-    if unique_multi in ['unique', 'all']:
-        uniq_dir = os.path.join(outdir, 'unique')
-        check_path(uniq_dir)
-        uniq_bam, uniq_fq, uniq_unmap = align_uniq(fq, index, uniq_dir, 
-            threads=4, gzipped=gzipped)
-        # annotation
-        anno_bam(uniq_bam, uniq_dir, genome)
-        uniq_bam_list = split_bam_1u10a(uniq_bam)
-        # output
-        fq_unmap = uniq_unmap
-        if file_exists(fq_align):
-            file_remove(fq_align, ask=False)
-        file_symlink(uniq_fq, fq_align)
-
-    ##---------------------------------------------------------##
-    ## uniq + multiple
-    if unique_multi in ['both', 'all']:
-        both_dir = os.path.join(outdir, 'unique_multi')
-        check_path(both_dir)
-        both_bam, both_fq, both_unmap = align_both(fq, index, both_dir, k=1, 
-            threads=threads, gzipped=gzipped)
-        # annotation
-        anno_bam(both_bam, both_dir, genome)
-        both_bam_list = split_bam_1u10a(both_bam)
-        # output
-        fq_unmap = both_unmap
-        if file_exists(fq_align):
-            file_remove(fq_align, ask=False)
-        file_symlink(both_fq, fq_align)
-
-    return (fq_align, fq_unmap)
 
 
 def pipe_overlap(dirA, dirB, outdir):
