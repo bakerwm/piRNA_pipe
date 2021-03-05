@@ -194,7 +194,7 @@ class Align(object):
         return fx_out
         
         
-    def revComp(self, s):
+    def rev_comp(self, s):
         d = {"A": "T", "C": "G", "G": "C", "T": "A", "N": "N"}
         s = [d[c] for c in s]
         return ''.join(s[::-1])
@@ -229,7 +229,7 @@ class Align(object):
                 s = read.query_sequence
                 q = ''.join([chr(c+33) for c in read.query_qualities])
                 if read.is_reverse:
-                    s = self.revComp(s)
+                    s = self.rev_comp(s)
                     q = q[::-1]
                 if fq_format == 'fasta':
                     seq = '>{}\n{}\n'.format(read.query_name, s)
