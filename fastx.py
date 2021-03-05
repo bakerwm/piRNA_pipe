@@ -16,9 +16,10 @@ import pandas as pd
 import numpy as np
 from xopen import xopen
 from multiprocessing import Pool
-from hiseq.utils.helper import * 
+from hiseq.utils.helper import *
+from hiseq.fragsize.fragsize import BamFragSize
 from hiseq.utils.seq import Fastx
-from utils import get_fx_name
+from utils import get_fx_name, rev_comp
 
 
 
@@ -172,7 +173,10 @@ class FxCount(object):
         """Count reads for fastx"""
         # x_name = fq_name(x)
         x_name = get_fx_name(x, fix_unmap=False)
-        x_type = Fastx(x).format
+        try:
+            x_type = Fastx(x).format
+        except:
+            print('!AAAA-1', x)
         # save to file
         x_stat = os.path.join(os.path.dirname(x), x_name+'.fx_stat.toml')
         if file_exists(x_stat):
@@ -208,6 +212,8 @@ class FxU1A10(object):
     
     Example:
     >>> FxU1A10(fx).run()
+    
+    Also, support BAM split
     """
     def __init__(self, fx, **kwargs):
         self = update_obj(self, kwargs, force=True)
@@ -230,8 +236,48 @@ class FxU1A10(object):
         if len(self.fx) == 0:
             raise ValueError('fx, not found')
 
+            
+    def extract_bam_u1a10(self, bam, outdir=None, remove=False):
+        """Split bam into four groups:
+        U1_A10: U1 and A10
+        U1_B10: U1 and not A10, (B=C,G,T, not A)
+        V1_A10: not U1 and A10, (V=A,C,G, not U)
+        V1_B10: not U1 and not A10
+        see: IUPAC_code, http://www.bioinformatics.org/sms/iupac.html
+        """
+        b_name = get_fx_name(bam, fix_unmap=False)
+        if not check_file(bam, emptycheck=True):
+            log.error('extract_bam_u1a10() skipped, file not exists, or empty: {}'.format(bam))
+            return None
+        # output dir
+        if outdir is None:
+            outdir = os.path.join(os.path.dirname(bam), 'U1_A10')
+        check_path(outdir)
+        # output files
+        fout_name = ['U1_A10', 'U1_B10', 'V1_A10', 'V1_B10']
+        fout_list = [os.path.join(outdir, '{}.{}.bam'.format(b_name, i)) \
+            for i in fout_name]
+        if all(file_exists(fout_list)):
+            log.info('FxU1A10() skipped, file exists: {}'.format(bam))
+            return fout_list
+        # determine output file, writer
+        reader = pysam.AlignmentFile(bam, 'rb')
+        writer = [pysam.AlignmentFile(i, 'wb', template=reader) for i in fout_list]
+        def get_writer(u1, a10):
+            b1 = '0' if u1 in 'TU' else '1' # U1 
+            b2 = '0' if a10 in 'A' else '1' # A10
+            return writer[int('0b'+b1+b2, 2)] # binary to int
+        for read in reader.fetch():
+            seq = read.query_sequence
+            qual = ''.join([chr(c+33) for c in read.query_qualities])
+            if read.is_reverse:
+                seq = rev_comp(seq)
+            w = get_writer(seq[0], seq[9])
+            w.write(read)
+        return fout_list
+            
 
-    def extract_u1a10(self, fx, outdir=None, gzipped=True, remove=False):
+    def extract_fx_u1a10(self, fx, outdir=None, gzipped=True, remove=False):
         """Split fx into four groups:
         U1_A10: U1 and A10
         U1_B10: U1 and not A10, (B=C,G,T, not A)
@@ -239,10 +285,9 @@ class FxU1A10(object):
         V1_B10: not U1 and not A10
         see: IUPAC_code, http://www.bioinformatics.org/sms/iupac.html
         """
-        # fname = fq_name(fx)
-        x_name = get_fx_name(x, fix_unmap=False)
+        f_name = get_fx_name(fx, fix_unmap=False)
         if not check_file(fx, emptycheck=True):
-            log.error('extract_u1a10() skipped, file not exists, or empty: {}'.format(fx))
+            log.error('extract_fx_u1a10() skipped, file not exists, or empty: {}'.format(fx))
             return None
         ftype = Fastx(fx).format # fasta/fastq
         # output dir
@@ -252,7 +297,7 @@ class FxU1A10(object):
         # output files
         f_ext = ftype + '.gz' if gzipped else ftype # fastq/fasta
         fout_name = ['U1_A10', 'U1_B10', 'V1_A10', 'V1_B10']
-        fout_list = [os.path.join(outdir, '{}.{}.{}'.format(fname, i, f_ext)) \
+        fout_list = [os.path.join(outdir, '{}.{}.{}'.format(f_name, i, f_ext)) \
             for i in fout_name]
         if all(file_exists(fout_list)):
             log.info('FxU1A10() skipped, file exists: {}'.format(fx))
@@ -298,7 +343,12 @@ class FxU1A10(object):
         """Split fx, by 1U, 10A, single 
         input: index
         """
-        return self.extract_u1a10(self.fx[i])
+        fx = self.fx[i]
+        if fx[-3:] == 'bam':
+            out = self.extract_bam_u1a10(fx)
+        else:
+            out = self.extract_fx_u1a10(fx)
+        return out
         
         
     def run(self):
@@ -354,12 +404,13 @@ def collapse_fx(fx_in, fx_out):
     return fx_out
 
 
+
+################################################################################
 def split_fx(fx, outdir=None, min=23, max=29, gzipped=True):
     """Split fastq file by the size 
     23-29 nt
     """
-    # f_name = fq_name(fx)
-    x_name = get_fx_name(x, fix_unmap=False)
+    f_name = get_fx_name(fx, fix_unmap=False)
     f_type = Fastx(fx).format
     if outdir is None:
         outdir = os.path.join(os.path.dirname(fx), 'size_select')
@@ -395,6 +446,7 @@ def split_fx(fx, outdir=None, min=23, max=29, gzipped=True):
     return (fx_in, fx_ex)
 
 
+################################################################################
 def overlap_fx(query, subject, outdir=None, threads=4):
     """Check overlap between fastq files, by sequence
     using command tool: 
