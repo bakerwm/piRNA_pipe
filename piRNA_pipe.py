@@ -3,6 +3,12 @@
 """
 piRNA analysis (small RNAseq) 
 
+Example:
+
+1. Calculate overlap between files
+piRNA_pipe.py -i in.fq -o outdir -g dm6 -t -p 4 -j 4 -s a.fq b.fq c.fq
+
+
 
 date: 2020-12-27
 
@@ -75,8 +81,9 @@ from hiseq.utils.helper import listfile
 from hiseq.utils.seq import Fastx
 from piRNA_pipe_utils import *
 from align import Align
-from fastx import FxU1A10, FxCount, collapse_fx, split_fx, overlap_fx
+from fastx import collapse_fx, split_fx, overlap_fx
 from utils import get_args, PipeConfig
+from qc import PiRNApipeStat
 
 logging.basicConfig(
     format='[%(asctime)s %(levelname)s] %(message)s',
@@ -121,9 +128,8 @@ class PiRNApipe(object):
         split files into 1U,10A, add stat
         """
         log.info('00.Copy raw data')
-        fq_raw = os.path.join(self.raw_dir, self.fq_name)
-        file_symlink(fq, fq_raw)
-        return fq_raw
+        file_symlink(fq, self.fq_raw)
+        return self.fq_raw
 
 
     def run_trim(self, fq, trimmed=True):
@@ -134,10 +140,9 @@ class PiRNApipe(object):
             copy/links
         """
         log.info('01.Trim adapters')
-        fq_clean = os.path.join(self.clean_dir, self.fq_name)
         try:
             if trimmed:
-                file_symlink(fq, fq_clean)
+                file_symlink(fq, self.fq_clean)
             else:
                 args_local = {
                     'fq1': fq,
@@ -147,11 +152,11 @@ class PiRNApipe(object):
                 }
                 trim = Trim(**args_local)
                 trim.run()
-                file_symlink(trim.clean_fq, fq_clean)
+                file_symlink(trim.clean_fq, self.fq_clean)
         except:
             log.error('run_trim() failed')
             fq_clean = None
-        return fq_clean
+        return self.fq_clean
 
 
     def run_collapse(self, fq):
@@ -159,16 +164,15 @@ class PiRNApipe(object):
         save read count in id line
         """
         log.info('02.Collapse fastq')
-        fq_collapse = os.path.join(self.collapse_dir, self.fq_name)
         if self.collapse:
             try:
-                out_fq = collapse_fx(fq, fq_collapse)
+                out_fq = collapse_fx(fq, self.fq_collapse)
             except:
                 log.error('run_collapse() failed')
                 fq_collapse = None
         else:
-            file_symlink(fq, fq_collapse)
-        return fq_collapse
+            file_symlink(fq, self.fq_collapse)
+        return self.fq_collapse
 
 
     def run_overlap(self, fq):
@@ -176,7 +180,6 @@ class PiRNApipe(object):
         Input fastq
         """
         log.info('03.Overlap with other RNAs')
-        fq_overlap = os.path.join(self.overlap_dir, self.fq_name)
         if self.subject:
             try:
                 overlap_fx(fq, self.subject, self.overlap_dir)
@@ -184,8 +187,8 @@ class PiRNApipe(object):
                 log.error('run_overlap() failed')
                 fq_overlap = None
         else:
-            file_symlink(fq, fq_overlap)
-        return fq_overlap
+            file_symlink(fq, self.fq_overlap)
+        return self.fq_overlap
 
 
     def run_smRNA(self, fq):
@@ -213,14 +216,12 @@ class PiRNApipe(object):
         log.info('06.Size select')
         try:
             fout = split_fx(fq, self.size_dir, min=23, max=29) # in, ex
-            fq_size_in = os.path.join(self.size_dir, self.fq_name)
-            fq_size_ex = os.path.join(self.size_ex_dir, self.fq_name)
-            file_symlink(fout[0], fq_size_in)
-            file_symlink(fout[1], fq_size_ex)
+            file_symlink(fout[0], self.fq_size_in)
+            file_symlink(fout[1], self.fq_size_ex)
         except:
             log.error('run_size_select() failed')
-            fq_size_in = None
-        return fq_size_in
+            self.fq_size_in = None
+        return self.fq_size_in
 
 
     def run_TE(self, fq):
@@ -253,6 +254,8 @@ class PiRNApipe(object):
         fout = self.run_align(fq, 'genome', 'both')
         self.run_align(fq, 'genome', 'unique')
         self.run_align(fq, 'genome', 'multi')
+        # link unal
+        file_symlink(fout[2], self.fq_unal)
         return fout[2] # bam, fq_align, fq_unal
 
 
@@ -332,34 +335,45 @@ class PiRNApipe(object):
         else:
             raise Exception('workflow expect [1:4], default: 1')
         # stat
+        PiRNApipeStat(self.prj_dir).run()
+
+
+def overlap_subject(p):
+    """Run overlap, with subjects
+    p is the object of PiRNApipe
+    """
+    if not isinstance(p, PiRNApipe):
+        log.error('run_overlap() failed, p expect PiRNApipe, got {}'.format(
+            type(p).__name__))
+    else:
+        args_local = p.__dict__
+        if len(p.subject_list) > 0:
+            for sub in p.subject_list:
+                s_name = fq_name(sub)
+                args_ov = {
+                    'fq': p.fq_collapse,
+                    'trimmed': True,
+                    'collapse': True,
+                    'force_overlap': True,
+                    'subject': sub,
+                    'outdir': os.path.join(p.prj_dir, 'overlap', s_name)
+                }
+                args_local.update(args_ov)
+                pv = PiRNApipe(**args_local)
+                pv.run()
+
         
-
-
 def main():
     args = get_args()
-
-    # Do not overlap
+    # Not for overlap
     args_local = vars(args).copy()
     args_local['force_overlap'] = False
-    PiRNApipe(**args_local).run()
+    p = PiRNApipe(**args_local)
+    p.run()
+    
+    # For overlap
+    overlap_subject(p)
 
-#     # Run overlap
-#     # Prepare subject_list
-#     if isinstance(args.subject_list, list):
-#         args.subject = None
-#     elif isinstance(args.subject, str):
-#         args.subject_list = [args.subject]
-#     else:
-#         pass
-
-#     # if len(args.subject_list) > 0:
-#     if isinstance(args.subject_list, list):
-#         for sub in args.subject_list:
-#             args.subject = sub
-#             args.force_overlap = True
-#             args_local = vars(args).copy()
-#             Pipe(**args_local).run()
-            
 
 if __name__ == '__main__':
     main()
