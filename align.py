@@ -16,7 +16,7 @@ import numpy as np
 from xopen import xopen
 from hiseq.utils.helper import * 
 from hiseq.utils.seq import Fastx
-from utils import get_fx_name
+from fastx import get_fx_name
 
 
 logging.basicConfig(

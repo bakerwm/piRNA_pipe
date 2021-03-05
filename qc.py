@@ -32,7 +32,7 @@ class PiRNApipeStat(object):
             'parallel_jobs': 4,
         }
         self = update_obj(self, args_init, force=False)
-        self.x = file_abspath(self.fx)
+        self.x = file_abspath(self.x)
         # config
         config = os.path.join(self.x, 'config', 'config.toml')
         if not file_exists(config):

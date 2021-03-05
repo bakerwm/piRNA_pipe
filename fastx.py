@@ -19,8 +19,6 @@ from multiprocessing import Pool
 from hiseq.utils.helper import *
 from hiseq.fragsize.fragsize import BamFragSize
 from hiseq.utils.seq import Fastx
-from utils import get_fx_name, rev_comp
-
 
 
 class FxFragSize(object):
@@ -492,3 +490,73 @@ def overlap_fx(query, subject, outdir=None, threads=4):
         )
         print(msg)
         return out_fq
+
+    
+
+################################################################################
+def get_fx_name(x, fix_unmap=True):
+    """Parse the name of fastx
+    a.fq
+    a.fq.gz
+    a.unmap.fq
+    a.unmap.fq.gz
+    """
+    if isinstance(x, str):
+        x_name = os.path.basename(x)
+        # remove .gz
+        if x_name[-3:] == '.gz':
+            x_name = x_name[:-3]
+        # remove ext:
+        x_name = os.path.splitext(x_name)[0]
+        # remove unmap
+        if x_name[-6:] == '.unmap' and fix_unmap:
+            x_name = x_name[:-6]
+        return x_name
+        
+        
+def rev_comp(s):
+    d = {"A": "T", "C": "G", "G": "C", "T": "A", "N": "N"}
+    s = [d[c] for c in s]
+    return ''.join(s[::-1])
+
+
+################################################################################
+def fa_to_fq(fa, fq=None):
+    """Convert fa to fq
+    qual = 'I'
+    """
+    if not file_exists(fa):
+        log.error('fa_to_fq() failed, file not exists: {}'.format(fa))
+        return None
+    fa_name = get_fx_name(fa)
+    if not isinstance(fq, str):
+        fq = os.path.join(os.path.dirname(fa), fa_name+'.fastq.gz')
+    # fa-type
+    fa_type = Fastx(fa).format
+    if not fa_type == 'fasta':
+        log.error('fa_to_fq() failed, input not fasta format: {}'.format(fa))
+        return None
+    # fq-type
+    fq_name = os.path.basename(os.path.splitext(fq)[0])
+    if fq[-3:] == '.gz':
+        fq_name, fq_type = os.path.splitext(fq_name)
+    if not fq_type in ['.fq', '.fastq']:
+        log.error('fa_to_fq() failed, output not fq name: {}'.format(fq))
+        return None
+    if file_exists(fq):
+        log.info('fa_to_fq() skipped, file exista: {}'.format(fq))
+    # run
+    try:
+        reader = pyfastx.Fastx(fa)
+        with xopen(fq, 'wt') as w:
+            for name,seq,comment in reader:
+                if comment:
+                    name = name + ' ' + comment
+                qual = 'I'*len(seq)
+                s = '@{}\n{}\n+\n{}'.format(name, seq, qual)
+                w.write(s+'\n')
+    except:
+        log.error('fa_to_fq() failed')
+
+
+        

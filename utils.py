@@ -11,37 +11,6 @@ from hiseq.utils.helper import * # update_obj, fq_name, file_abspath, check_path
 
 
 
-
-
-
-def get_fx_name(x, fix_unmap=True):
-    """Parse the name of fastx
-    a.fq
-    a.fq.gz
-    a.unmap.fq
-    a.unmap.fq.gz
-    """
-    if isinstance(x, str):
-        x_name = os.path.basename(x)
-        # remove .gz
-        if x_name[-3:] == '.gz':
-            x_name = x_name[:-3]
-        # remove ext:
-        x_name = os.path.splitext(x_name)[0]
-        # remove unmap
-        if x_name[-6:] == '.unmap' and fix_unmap:
-            x_name = x_name[:-6]
-        return x_name
-        
-        
-def rev_comp(s):
-    d = {"A": "T", "C": "G", "G": "C", "T": "A", "N": "N"}
-    s = [d[c] for c in s]
-    return ''.join(s[::-1])
-
-
-
-
 def get_args():
     """
     require arguments:
@@ -65,6 +34,8 @@ def get_args():
                         help='reference genome, default: [dm6]')
     parser.add_argument('-t', '--trimmed', action='store_true',
                         help='No need to trim adapters')
+    parser.add_argument('-c', '--collapsed', action='store_true',
+                        help='Input file is collapsed')
     parser.add_argument('-s', '--subject-list', nargs='+', dest='subject_list',
                         default=[],
                         help='list of fastq files, for overlap, default: []')
@@ -117,7 +88,7 @@ class PipeConfig(object):
             'genome': 'dm6',
             'threads': 4,
             'parallel_jobs': 1,
-            'collapse': True,
+            'collapsed': False,
             'workflow': 1,
             'trimmed': True,
             'force_overlap': False,
