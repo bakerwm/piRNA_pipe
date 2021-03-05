@@ -75,6 +75,7 @@ class Align(object):
         # output
         self.f_type = Fastx(self.fx).format
         self.f_name = fq_name(self.fx)
+        self.f_name = self.f_name.strip('.unmap')
                 
         
     def align(self, fx, outdir=None, fix_outdir=False):
