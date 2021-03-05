@@ -15,6 +15,7 @@ import pysam
 import pandas as pd
 import numpy as np
 from xopen import xopen
+from multiprocessing import Pool
 from hiseq.utils.helper import * 
 from hiseq.utils.seq import Fastx
 
@@ -24,6 +25,9 @@ class FxFragSize(object):
     """Calculate length distribution for fx
     fx list of files (could be fastq, bam)
     outdir
+    
+    Example:
+    >>> FxFragSize(fx).run()
     """
     def __init__(self, fx, **kwargs):
         self = update_obj(self, kwargs, force=True)
@@ -65,10 +69,8 @@ class FxFragSize(object):
             log.info('fragsize() skipped, file exists: {}'.format(csv_file))
         else:
             if f_ext == '.bam':
-                print('BBBB-1')
                 BamFragSize(fx, asPE=False, strandness=True).saveas(csv_file)
             elif f_ext == '.gz':
-                print('BBBB-2', csv_file)
                 Fastx(fx).len_dist(csv_file=csv_file)
             else:
                 pass
@@ -100,6 +102,9 @@ class FxCount(object):
         
     for fasta (collapsed), >1-200,
     add the total amount
+    
+    Example:
+    >>> FxCount(fx).run()
     """
     def __init__(self, fx, **kwargs):
         self.fx = fx
@@ -155,16 +160,20 @@ class FxCount(object):
         """Count reads for fastx"""
         x_name = fq_name(x)
         x_type = Fastx(x).format
-        n_seq = self.count_fq(x) if x_type == 'fastq' else self.count_fa(x)
         # save to file
         x_stat = os.path.join(os.path.dirname(x), x_name+'.fx_stat.toml')
-        stat = {
-            'name': x_name,
-            'type': x_type,
-            'unique': n_seq[0],
-            'total': n_seq[1]            
-        }
-        Config().to_toml(stat, x_stat)
+        if file_exists(x_stat):
+            log.info('FxCount() skipped, file exists: {}'.format(x))
+            stat = Config().load(x_stat)
+        else:
+            n_seq = self.count_fq(x) if x_type == 'fastq' else self.count_fa(x)
+            stat = {
+                'name': x_name,
+                'type': x_type,
+                'unique': n_seq[0],
+                'total': n_seq[1]            
+            }
+            Config().dump(stat, x_stat)
         return stat
         
         
@@ -183,15 +192,18 @@ class FxCount(object):
 class FxU1A10(object):
     """Check U1 and A10 for fastx file
     check for fx
+    
+    Example:
+    >>> FxU1A10(fx).run()
     """
-    def __init__(self, fx_list, **kwargs):
+    def __init__(self, fx, **kwargs):
         self = update_obj(self, kwargs, force=True)
-        self.fx_list = fx_list
+        self.fx = fx
         self.init_args()
        
     
     def init_args(self):
-        """Require: fx_list
+        """Require: fx
         """
         args_init = {
             'outdir': None,
@@ -199,11 +211,11 @@ class FxU1A10(object):
         }
         self = update_obj(self, args_init, force=False)
         # file exists, not empty
-        if isinstance(self.fx_list, str):
-            self.fx_list = [self.fx_list]
-        self.fx_list = [i for i in self.fx_list if check_file(i, emptycheck=True)]
-        if len(self.fx_list) == 0:
-            raise ValueError('fx_list, not found')
+        if isinstance(self.fx, str):
+            self.fx = [self.fx]
+        self.fx = [i for i in self.fx if check_file(i, emptycheck=True)]
+        if len(self.fx) == 0:
+            raise ValueError('fx, not found')
 
 
     def extract_u1a10(self, fx, outdir=None, gzipped=True, remove=False):
@@ -228,6 +240,9 @@ class FxU1A10(object):
         fout_name = ['U1_A10', 'U1_B10', 'V1_A10', 'V1_B10']
         fout_list = [os.path.join(outdir, '{}.{}.{}'.format(fname, i, f_ext)) \
             for i in fout_name]
+        if all(file_exists(fout_list)):
+            log.info('FxU1A10() skipped, file exists: {}'.format(fx))
+            return fout_list
         # determine output file, writer
         reader = pyfastx.Fastx(fx)
         writer = [xopen(i, 'wt') for i in fout_list]
@@ -269,20 +284,20 @@ class FxU1A10(object):
         """Split fx, by 1U, 10A, single 
         input: index
         """
-        return self.extract_u1a10(self.fx_list[i])
+        return self.extract_u1a10(self.fx[i])
         
         
     def run(self):
         """Check the u1a10 content for fastq files, list
         """
-        if len(self.fx_list) > 1 and self.parallel_jobs > 1:
+        if len(self.fx) > 1 and self.parallel_jobs > 1:
             with Pool(processes=self.parallel_jobs) as pool:
-                pool.map(self.run_single, range(len(self.fx_list)))
+                pool.map(self.run_single, range(len(self.fx)))
         else:
-            for i in range(len(self.fx_list)):
+            for i in range(len(self.fx)):
                 self.run_single(i)
         
-        # self.run_u1a10(self.fx_list)
+        # self.run_u1a10(self.fx)
 
         
         
