@@ -5,7 +5,7 @@
 import os
 import pandas as pd
 from multiprocessing import Pool
-from hiseq.utils.helper import listfile, update_obj, file_exists, Config
+from hiseq.utils.helper import listfile, update_obj, file_exists, file_copy, Config, run_shell_cmd, file_abspath
 from fastx import FxU1A10, FxCount, FxFragSize
 
 
@@ -32,6 +32,7 @@ class PiRNApipeStat(object):
             'parallel_jobs': 4,
         }
         self = update_obj(self, args_init, force=False)
+        self.x = file_abspath(self.fx)
         # config
         config = os.path.join(self.x, 'config', 'config.toml')
         if not file_exists(config):
@@ -77,14 +78,16 @@ class PiRNApipeStat(object):
         return fx_list
     
     
-    def list_bam(self, u1a10=False, group=False):
-        """Return the 00.raw_data to 09.unmap bam files
+    def list_bam(self, u1a10=False, group=True):
+        """Return the 04.smRNA to 08.genome bam files
         align, bam files
+        
+        group: True
         """
         bam_list = []
-        dirs = self.list_dir(u1a10)
+        dirs = self.list_dir(u1a10, group=True) # level-1 dirs
         for d in dirs:
-            bam = listfile(d, "*.bam") # recursive ?
+            bam = listfile(d, "*.bam")
             if len(bam) > 0:
                 bam_list.extend(bam)
         return bam_list
@@ -194,15 +197,49 @@ class PiRNApipeStat(object):
         3.fragsize
         """
         # 1. U1A10
-        fx_list = self.list_fx(group=True)
+        bam_list = self.list_bam(u1a10=False) # split bam (group=True)
+        FxU1A10(bam_list, parallel_jobs=self.parallel_jobs).run()
+        fx_list = self.list_fx(u1a10=False, group=False) # split fx (level-1)
         FxU1A10(fx_list, parallel_jobs=self.parallel_jobs).run()
+        
         # 2. count
-        fx_list = self.list_fx(u1a10=True) # update fx list
+        fx_list = self.list_fx(u1a10=True, group=False) # count fx
         FxCount(fx_list, parallel_jobs=self.parallel_jobs).run()
+        
         # 3. fragsize
+        bam_list = self.list_bam(u1a10=True) # size bam
+        FxFragSize(bam_list, parallel_jobs=self.parallel_jobs).run()
+        fx_list = self.list_fx(u1a10=True, group=False) # size fx
         FxFragSize(fx_list, parallel_jobs=self.parallel_jobs).run()
     
     
+    def report(self):
+        """Generate report"""
+        pkg_dir = os.path.dirname(os.path.realpath(__file__))
+        qc_report_r = os.path.join(pkg_dir, 'report.R')
+        qc_report_rmd = os.path.join(pkg_dir, 'report.Rmd')        
+        # output
+        report_dir = self.prj.get('report_dir', None)
+        report_rmd = os.path.join(report_dir, os.path.basename(qc_report_rmd))
+        report_html = os.path.join(report_dir, 'smRNA_report.html')
+        log_out = os.path.join(report_dir, 'log.stdout')
+        log_err = os.path.join(report_dir, 'log.stderr')
+        # run
+        # args: prj_dir, outhtml, template
+        cmd = ' '.join([
+            'Rscript', qc_report_r, 
+            self.x, report_html, report_rmd, 
+            '1>', log_out, '2>', log_err])
+        cmd_sh = os.path.join(report_dir, 'cmd.sh')
+        with open(cmd_sh, 'wt') as w:
+            w.write(cmd+'\n')
+        if file_exists(report_html):
+            log.info('report() skipped, file exists: {}'.format(report_html))
+        else:
+            file_copy(qc_report_rmd, report_rmd) # copy
+            run_shell_cmd(cmd)
+
+
     def run(self):
         """Run all stat
         U1A10
@@ -211,4 +248,5 @@ class PiRNApipeStat(object):
         """
         self.run_stat()
         self.stat_dirs()
+        self.report()
 
