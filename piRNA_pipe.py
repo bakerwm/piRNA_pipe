@@ -295,7 +295,6 @@ class PiRNApipe(object):
             # create symlink, move-up level-1
             fq_dir = os.path.dirname(os.path.dirname(fout[1]))
             fq_align = os.path.join(fq_dir, os.path.basename(fout[1]))
-            print('!CCCC-1', )
             file_symlink(fout[1], fq_align)
             fout[1] = fq_align # update
         except:

@@ -33,6 +33,11 @@ def get_fx_name(x, fix_unmap=True):
             x_name = x_name[:-6]
         return x_name
         
+        
+def rev_comp(s):
+    d = {"A": "T", "C": "G", "G": "C", "T": "A", "N": "N"}
+    s = [d[c] for c in s]
+    return ''.join(s[::-1])
 
 
 
