@@ -413,8 +413,9 @@ def stat_fq(fq, outdir=None):
     if isinstance(fq, str):
         if not isinstance(outdir, str):
             outdir = os.path.dirname(fq)
-        fname = fq_name(fq)
-        fq_stat_name = '{}.fq_stat.txt'.format(fq_name)
+        # f_name = fq_name(fq)
+        f_name = get_fx_name(fq, fix_unmap=False)
+        fq_stat_name = '{}.fq_stat.txt'.format(f_name)
         fq_stat_txt = os.path.join(outdir, fq_stat_name)
         if outdir is None:
             outdir = os.path.dirname(fq)
@@ -457,7 +458,7 @@ def read_seqkit_stat(x):
     if isinstance(x, str):
         if check_file(x, emptycheck=True):
             df = pd.read_csv(x, delim_whitespace=True, thousands=',')
-            df.file = [fq_name(i) for i in df.file.to_list()]
+            df.file = [get_fx_name(i) for i in df.file.to_list()]
         else: 
             log.warning('read_seqkit_stat() skipped, empty file: {}'.format(x))
             df = None
