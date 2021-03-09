@@ -3,11 +3,19 @@
 
 
 import os
+import sys
+import logging
 import pandas as pd
 from multiprocessing import Pool
 from hiseq.utils.helper import listfile, update_obj, file_exists, file_copy, Config, run_shell_cmd, file_abspath
 from fastx import FxU1A10, FxCount, FxFragSize
 
+logging.basicConfig(
+    format='[%(asctime)s %(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    stream=sys.stdout)
+log = logging.getLogger(__name__)
+log.setLevel('WARNING')
 
 
 class PiRNApipeStat(object):
@@ -29,7 +37,7 @@ class PiRNApipeStat(object):
     
     def init_args(self):
         args_init = {
-            'parallel_jobs': 4,
+            'parallel_jobs': 1,
         }
         self = update_obj(self, args_init, force=False)
         self.x = file_abspath(self.x)
@@ -143,7 +151,7 @@ class PiRNApipeStat(object):
         frames = [self.load_toml(i) for i in t2]
         if len(frames) > 0:
             df2 = pd.concat(frames, axis=0)
-            df2.columns = h
+            df2.columns = ['sample', 'num_reads', 'fx_type', 'num_seqs']
             df2[['sample', 'u1a10']] = df2['sample'].str.split('.', 1, expand=True)
         else:
             df2 = dfx

@@ -51,6 +51,29 @@ library(ggpubr) # for pie chart
 library(fishualize)
 ```
 
+
+```{r functions}
+library(limma)
+library(readr)
+# zscore
+read_count <- function(x) {
+  lapply(x, function(f) {
+    readr::read_delim(
+      f, "\t",
+      col_names = c("name", "length", "count", "extra"),
+      col_types = readr::cols()) %>%
+      dplyr::mutate(
+        sample = gsub(".count.csv", "", basename(f)),
+        group = basename(dirname(dirname(f))),
+        index = basename(dirname(f)),
+        zscore = limma::zscore(count, dist="chisq", df=1),
+      )
+  }) %>%
+    dplyr::bind_rows()
+}
+```
+
+
 ## 1. Methods
 
 small RNA reads were first mapped to  
@@ -180,6 +203,34 @@ hiseqr::bar_plot_lendist(df1) +
 
 #### 2.4.2 Map to TE consensus
 
+
+```{r}
+# count
+c_list <- list.files("../07.te/", "*.count.txt$", 
+                     full.names = TRUE, recursive = TRUE)
+df_te  <- read_count(c_list)
+# order unique
+te_rank <- df_te %>%
+  dplyr::filter(index %in% "unique") %>%
+  dplyr::arrange(desc(zscore)) %>%
+  dplyr::pull(name)
+
+# re-level df_te
+df_te   <- df_te %>%
+  dplyr::mutate(
+    name  = forcats::fct_relevel(name, te_rank),
+    index = forcats::fct_relevel(index, c("unique", "multi", "both")))
+p_te    <- df_te %>%
+   hiseqr::bar_plot(x = "zscore", y = "name", label = NA, group = "index", direction = "horizontal") +
+  facet_grid(~index)
+```
+
+```{r, fig.width=5, fig.height=15}
+p_te
+```
+
+
+
 `unique`: unique mapped reads;    
 `multi`: multi mapped reads;  
 `both`: all mapped reads;   
@@ -228,6 +279,32 @@ hiseqr::bar_plot_lendist(df4) +
 
 
 #### 2.4.3 Map to piRNA_clusters
+
+```{r}
+# count
+c_list <- list.files("../08.piRNA_cluster/", "*.count.txt$", 
+                     full.names = TRUE, recursive = TRUE)
+df_piRC  <- read_count(c_list)
+# order unique
+piRC_rank <- df_piRC %>%
+  dplyr::filter(index %in% "unique") %>%
+  dplyr::arrange(desc(zscore)) %>%
+  dplyr::pull(name)
+
+# re-level df_te
+df_piRC   <- df_piRC %>%
+  dplyr::mutate(
+    name  = forcats::fct_relevel(name, piRC_rank),
+    index = forcats::fct_relevel(index, c("unique", "multi", "both")))
+p_piRC   <- df_piRC %>%
+   hiseqr::bar_plot(x = "zscore", y = "name", label = NA, group = "index", direction = "horizontal") +
+  facet_grid(~index)
+```
+
+```{r, fig.width=5, fig.height=15}
+p_piRC
+```
+
 
 `unique`: unique mapped reads;    
 `multi`: multi mapped reads;  

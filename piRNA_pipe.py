@@ -84,6 +84,7 @@ from align import Align
 from fastx import collapse_fx, split_fx, overlap_fx, get_fx_name, fa_to_fq
 from utils import get_args, PipeConfig
 from qc import PiRNApipeStat
+from count import CountDir
 
 
 logging.basicConfig(
@@ -92,7 +93,6 @@ logging.basicConfig(
     stream=sys.stdout)
 log = logging.getLogger(__name__)
 log.setLevel('WARNING')
-
 
         
 class PiRNApipe(object):
@@ -128,8 +128,7 @@ class PiRNApipe(object):
         split files into 1U,10A, add stat
         """
         log.info('00.Copy raw data')
-        #!!! make sure fastq format
-        fq_type = Fastx(fq).format
+        fq_type = Fastx(fq).format #!!! make sure fastq format
         if fq_type == 'fastq':
             file_symlink(fq, self.fq_raw)
         elif fq_type == 'fasta':
@@ -343,6 +342,8 @@ class PiRNApipe(object):
             raise Exception('workflow expect [1:4], default: 1')
         # stat
         PiRNApipeStat(self.prj_dir).run()
+        # count reads on TE*/piRC*/genome
+        CountDir(self.prj_dir).run()
 
 
 def overlap_subject(p):
@@ -370,17 +371,52 @@ def overlap_subject(p):
                 pv = PiRNApipe(**args_local)
                 pv.run()
 
+                
+def run_pipe_single(args):
+    """Run the pipeline
+    two positional arguments:
+    1. dict, with arguments
+    2. i, index of the fastq
+    """
+    args_i = args[0].copy()
+    i = args[1]
+    print('!AAAA-2', i)
+    
+    # no-overlap
+    parallel = args_i['parallel_jobs'] if len(args_i['fq_input']) == 1 else 1
+    args_i['fq'] = args_i['fq_input'][i]
+    args_i['parallel_jobs'] = parallel
+    args_i['force_overlap'] = False
+    p = PiRNApipe(**args_i)
+    p.run()
+    
+    # overlap
+    overlap_subject(p)
+
         
 def main():
     args = get_args()
-    # Not for overlap
     args_local = vars(args).copy()
-    args_local['force_overlap'] = False
-    p = PiRNApipe(**args_local)
-    p.run()
-    
-    # For overlap
-    overlap_subject(p)
+    # prepare arguments
+    args_list = [[args_local, i] for i in range(len(args.fq_input))]
+    if len(args.fq_input) > 1 and args.parallel_jobs > 1:
+        print('!BBBB-2', args.parallel_jobs, 'Pool')
+        with Pool(processes=args.parallel_jobs) as pool:
+            pool.map(run_pipe_single, args_list)
+            # pool.map(run_pipe_single, range(len(args.fq_input)))
+    else:
+        print('!BBBB-3', args.parallel_jobs, 'non-Pool')
+        tmp = [run_pipe_single(i) for i in args_list]
+        
+#     for fq in args.fq_input:
+#         args_local['fq'] = fq
+#         # Not for overlap
+#         args_local['force_overlap'] = False
+#         p = PiRNApipe(**args_local)
+#         p.run()
+
+#         # For overlap
+#         overlap_subject(p)
 
 
 if __name__ == '__main__':
