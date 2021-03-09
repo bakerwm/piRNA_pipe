@@ -272,8 +272,13 @@ class FxU1A10(object):
                 seq = rev_comp(seq)
             w = get_writer(seq[0], seq[9])
             w.write(read)
+        # index
+        try:
+            [pysam.index(i) for i in fout_list]
+        except:
+            print('index bam files failed')
         return fout_list
-            
+
 
     def extract_fx_u1a10(self, fx, outdir=None, gzipped=True, remove=False):
         """Split fx into four groups:
@@ -353,6 +358,7 @@ class FxU1A10(object):
         """Check the u1a10 content for fastq files, list
         """
         if len(self.fx) > 1 and self.parallel_jobs > 1:
+            print('!CCCC-x', self.parallel_jobs)
             with Pool(processes=self.parallel_jobs) as pool:
                 pool.map(self.run_single, range(len(self.fx)))
         else:

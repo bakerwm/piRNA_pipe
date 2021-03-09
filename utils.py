@@ -6,6 +6,7 @@ PipeConfig(), for preparing data, files, dirs,
 """
 
 import os
+import re
 import argparse
 from hiseq.utils.helper import * # update_obj, fq_name, file_abspath, check_path, check_file
 
@@ -26,7 +27,7 @@ def get_args():
     ...
     """
     parser = argparse.ArgumentParser(description='piRNA pipe')
-    parser.add_argument('-i', '--fq', required=True,
+    parser.add_argument('-i', '--fq', required=True, nargs='+', dest='fq_input',
                         help='fastq file') 
     parser.add_argument('-o', '--outdir', required=True,
                         help='directory to save results')
@@ -108,6 +109,8 @@ class PipeConfig(object):
         # smp_name
         if not isinstance(self.smp_name, str):
             self.smp_name = fq_name(self.fq, pe_fix=False)
+        # fix smp_name, "." by "_"
+        self.smp_name = re.sub('[^\w+]', '_', self.smp_name)
         self.fx_name = self.smp_name + '.fastq.gz' # force fastq output
         # outdir
         if not isinstance(self.outdir, str):
@@ -247,5 +250,11 @@ class PipeConfig(object):
             'fq_size_in': os.path.join(self.size_dir, self.fx_name),
             'fq_size_ex': os.path.join(self.size_ex_dir, self.fx_name),
             'fq_unal': os.path.join(self.unmap_dir, self.fx_name),
+            'te_count_unique': os.path.join(self.te_dir, 'unique', self.smp_name+'.count.csv'),
+            'te_count_multi': os.path.join(self.te_dir, 'multi', self.smp_name+'.count.csv'),
+            'te_count_both': os.path.join(self.te_dir, 'both', self.smp_name+'.count.csv'),
+            'piRC_count_unique': os.path.join(self.piRC_dir, 'unique', self.smp_name+'.count.csv'),
+            'piRC_count_multi': os.path.join(self.piRC_dir, 'multi', self.smp_name+'.count.csv'),
+            'piRC_count_both': os.path.join(self.piRC_dir, 'both', self.smp_name+'.count.csv'),
         }
         self = update_obj(self, args_files, force=True)
