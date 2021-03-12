@@ -9,6 +9,7 @@ import pandas as pd
 from multiprocessing import Pool
 from hiseq.utils.helper import listfile, update_obj, file_exists, file_copy, Config, run_shell_cmd, file_abspath
 from fastx import FxU1A10, FxCount, FxFragSize
+from track_file import run_bam_to_bw
 
 logging.basicConfig(
     format='[%(asctime)s %(levelname)s] %(message)s',
@@ -219,7 +220,11 @@ class PiRNApipeStat(object):
         FxFragSize(bam_list, parallel_jobs=self.parallel_jobs).run()
         fx_list = self.list_fx(u1a10=True, group=False) # size fx
         FxFragSize(fx_list, parallel_jobs=self.parallel_jobs).run()
-    
+        
+        # 4. bam to bw
+        # only unique bam files: te,piRC,genome
+        bw_list = [run_bam_to_bw(self.x, i) for i in ['te', 'piRC', 'genome']]
+
     
     def report(self):
         """Generate report"""
