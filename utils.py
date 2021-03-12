@@ -129,6 +129,9 @@ class PipeConfig(object):
         # threads, parallel_jobs, collapse, trimmed, ...
         self.fq = file_abspath(self.fq)
         self.outdir = file_abspath(self.outdir)
+        # update subject
+        if isinstance(self.subject, str):
+            self.subject = file_abspath(self.subject)
         # update files
         self.init_overlap()
         self.init_dirs()
@@ -258,3 +261,138 @@ class PipeConfig(object):
             'piRC_count_both': os.path.join(self.piRC_dir, 'both', self.smp_name+'.count.csv'),
         }
         self = update_obj(self, args_files, force=True)
+
+        
+        
+def is_pipe_dir(x):
+    """Check if the path is pipe() directory
+    
+    Parameters
+    ----------
+    x : str
+        Path to the pipe() project directory
+    
+    >>> is_pipe_dir(x)
+    True
+    """
+    out = False # default
+    if not isinstance(x, str):
+        log.error('x expect str, got {}'.format(type(x).__name__))
+    config = os.path.join(x, 'config', 'config.toml')
+    if file_exists(config):
+        p = Config().load(config)
+        out = all([i in p for i in ['te_dir', 'piRC_dir', 'te_index', 'piRC_index']])
+    return out
+
+
+
+def get_x_file(x, filetype='bam', group='map', unique='unique', check_exists=True):
+    """Retrieve the file in pipe() project
+    
+    Parameters
+    ----------
+    x : str
+        Path to the pipe() project directory
+    
+    filetype: str
+        The filetype of target file, support: 
+        ['bam', 'bigwig', 'fragsize', 'fx_stat'], default: 'bam'
+        
+    group : str
+        The group of reads, choose from ['map', 'raw', 'clean', 'collapse',
+        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap'], default: `map`
+        
+    unique : str
+        The unique or multi mapping, ['unique', 'multi', 'both'], 
+        only valid for bam and bigwig files
+        default: 'unique'
+    """
+    if not is_pipe_dir(x):
+        log.error('x is not pipe() directory: {}'.format(x))
+        return None
+    ft_list = ['bam', 'bw', 'bigwig', 'fragsize', 'fx_stat']
+    if not filetype in ft_list:
+        log.error('filetype={} not valid, choose: {}'.format(filetype, ft_list))
+        return None
+    g_list = ['map', 'raw', 'clean', 'collapse', 'smRNA', 'miRNA', 'te', 
+             'piRC', 'genome', 'unmap']
+    if not group in g_list:
+        log.error('group={} not valid, choose: {}'.format(group, g_list))
+        return None
+    # config
+    config = os.path.join(x, 'config', 'config.toml')
+    p = Config().load(config)
+    d = p.get(group+'_dir', x) # dir
+    smp_name = p.get('smp_name', os.path.basename(x))
+    # output file name: filetype, unique
+    exts = {
+        'bam': 'bam',
+        'bw': 'bigwig',
+        'bigwig': 'bigwig',
+        'fragsize': 'fragsize.csv',
+        'fx_stat': 'fx_stat.toml',
+    }
+    f_ext = exts.get(filetype, 'bam')
+    out_fname = smp_name+'.'+f_ext
+    out = os.path.join(d, out_fname)
+    if filetype in ['bam', 'bw', 'bigwig']:
+        out = os.path.join(d, unique, out_fname)
+    # check file exists
+    if check_exists:
+        if not file_exists(out):
+            log.warning('file not exists: {}'.format(out))
+            out = None
+    return out
+    
+    
+
+
+
+def get_x_map(x, group='map', num_seqs=False):
+    """The number of mappped reads for project
+    
+    Parameters
+    ----------
+    x : str
+        Path to the pipe() project directory
+        
+    group : str
+        The group of reads, choose from ['map', 'raw', 'clean', 'collapse',
+        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap'], default: `map`
+        
+    num_seqs : bool
+        If available, return the number of sequences, instead of the read number
+        default: `False`
+    
+    11.stat/fx_stat.reads.csv
+    """
+    if not is_pipe_dir(x):
+        log.error('x is not pipe() directory, {}'.format(x))
+        return None
+    g_list = ['map', 'raw', 'clean', 'collapse', 'smRNA', 'miRNA', 'te', 
+             'piRC', 'genome', 'unmap']
+    if not group in g_list:
+        log.error('group is not valid: {}, choose from: {}'.format(group, g_list))
+        return None
+    config = os.path.join(x, 'config', 'config.toml')
+    p = Config().load(config)
+    smp_name = p.get('smp_name', os.path.basename(x))
+    # choose dir
+    if group == 'map':
+        # clean - unmap
+        out = get_x_map(x, 'clean') - get_x_map(x, 'unmap')
+    else:
+        d = p.get(group+'_dir', x)
+        s = os.path.join(d, smp_name+'.fx_stat.toml')
+        sd = Config().load(s) # name, type, unique, total
+        if num_seqs:
+            out = sd.get('unique', 0)
+        else:
+            out = sd.get('total', 0)
+    return out
+            
+        
+        
+        
+        
+        
