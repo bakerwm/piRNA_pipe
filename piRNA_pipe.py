@@ -360,7 +360,7 @@ def overlap_subject(p):
                 # s_name = fq_name(sub)
                 s_name = get_fx_name(sub)
                 args_ov = {
-                    'fq': p.fq_collapse,
+                    'fq': p.fq_clean,
                     'trimmed': True,
                     'collapse': True,
                     'force_overlap': True,
