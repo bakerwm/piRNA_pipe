@@ -223,7 +223,7 @@ class PiRNApipeStat(object):
         
         # 4. bam to bw
         # only unique bam files: te,piRC,genome
-        bw_list = [run_bam_to_bw(self.x, i) for i in ['te', 'piRC', 'genome']]
+        bw_list = [run_bam_to_bw(self.x, i) for i in ['te', 'piRC', 'genome', 'genome2']]
 
     
     def report(self):

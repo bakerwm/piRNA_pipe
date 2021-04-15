@@ -231,6 +231,7 @@ class PipeConfig(object):
             'te_dir': self.prj_dir + '/07.te', # TE/piR_C/genome
             'piRC_dir': self.prj_dir + '/08.piRNA_cluster', # piR_C (optional)
             'genome_dir': self.prj_dir + '/09.genome', # genome (optional)
+            'genome2_dir': self.prj_dir + '/13.genome', # genome (optional)
             'unmap_dir': self.prj_dir + '/10.unmap',
             'stat_dir': self.prj_dir + '/11.stat',
             'report_dir': self.prj_dir + '/12.report'
@@ -300,7 +301,8 @@ def get_x_file(x, filetype='bam', group='map', unique='unique', check_exists=Tru
         
     group : str
         The group of reads, choose from ['map', 'raw', 'clean', 'collapse',
-        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap'], default: `map`
+        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap', 'genome2'],
+        default: `map`
         
     unique : str
         The unique or multi mapping, ['unique', 'multi', 'both'], 
@@ -315,7 +317,7 @@ def get_x_file(x, filetype='bam', group='map', unique='unique', check_exists=Tru
         log.error('filetype={} not valid, choose: {}'.format(filetype, ft_list))
         return None
     g_list = ['map', 'raw', 'clean', 'collapse', 'smRNA', 'miRNA', 'te', 
-             'piRC', 'genome', 'unmap']
+             'piRC', 'genome', 'unmap', 'genome2']
     if not group in g_list:
         log.error('group={} not valid, choose: {}'.format(group, g_list))
         return None
@@ -343,9 +345,6 @@ def get_x_file(x, filetype='bam', group='map', unique='unique', check_exists=Tru
             log.warning('file not exists: {}'.format(out))
             out = None
     return out
-    
-    
-
 
 
 def get_x_map(x, group='map', num_seqs=False):
@@ -358,7 +357,8 @@ def get_x_map(x, group='map', num_seqs=False):
         
     group : str
         The group of reads, choose from ['map', 'raw', 'clean', 'collapse',
-        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap'], default: `map`
+        'smRNA', 'miRNA', 'te', 'piRC', 'genome', 'unmap', 'genome2'], 
+        default: `map`
         
     num_seqs : bool
         If available, return the number of sequences, instead of the read number

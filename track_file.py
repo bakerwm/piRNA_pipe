@@ -368,7 +368,7 @@ def run_bam_to_bw(x, group='te', strandness=None, unique='unique', outdir=None):
     if not is_pipe_dir(x):
         log.error('x is not pipe() project dir, {}'.format(x))
         return None
-    group_list = ['smRNA', 'miRNA', 'te', 'piRC', 'genome']
+    group_list = ['smRNA', 'miRNA', 'te', 'piRC', 'genome', 'genome2']
     if not group in group_list:
         log.error('group={} not valid, choose: {}'.format(group, group_list))
         return None
