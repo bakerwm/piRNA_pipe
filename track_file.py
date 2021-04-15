@@ -648,9 +648,9 @@ def main():
     with open(prj_txt) as r:
         prj_list = r.readlines()
     prj_list = [i.strip() for i in prj_list]
-    bw_list = [get_te_bw(i) for i in prj_list]
-    bw_list = [i for sub in bw_list for i in sub if i]
-    bw_to_tracks(bw_list, outdir=outdir)
+    bw_list = [get_x_file(i, 'bigwig', 'te') for i in prj_list]
+    get_tracks(bw_list, outdir=outdir)
+#     # bw_to_tracks(bw_list, outdir=outdir)
     
     
 if __name__ == '__main__':
