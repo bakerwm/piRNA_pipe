@@ -1,0 +1,424 @@
+---
+title: "smRNA report"
+author: "Ming Wang"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    highlight: tango
+    toc: yes
+    toc_float:
+      collapsed: no
+    keep_md: false
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+params:
+  input_dir: ""
+---
+
+```{r setup, include=FALSE}
+suppressPackageStartupMessages(library(knitr))
+
+knitr::opts_chunk$set(fig.width  = 12, 
+                      fig.height = 8, 
+                      fig.path   = "Figures/",
+                      eval       = TRUE,
+                      echo       = FALSE,
+                      cache      = FALSE,
+                      prompt     = FALSE,
+                      tidy       = FALSE,
+                      comment    = NA,
+                      message    = FALSE,
+                      warning    = FALSE,
+                      eval       = T,
+                      rownames.print = FALSE)
+```
+
+
+```{r load pkg}
+library(hiseqr)
+library(knitr)
+library(ggplot2)
+library(ggthemes)
+library(ggrepel)
+library(fishualize)
+library(patchwork)
+library(dplyr)
+library(tidyr)
+library(glue)
+library(ggpubr) # for pie chart
+library(fishualize)
+```
+
+
+```{r functions}
+library(limma)
+library(readr)
+# zscore
+read_count <- function(x) {
+  lapply(x, function(f) {
+    readr::read_delim(
+      f, "\t",
+      col_names = c("name", "length", "count", "extra"),
+      col_types = readr::cols()) %>%
+      dplyr::mutate(
+        sample = gsub(".count.csv", "", basename(f)),
+        group = basename(dirname(dirname(f))),
+        index = basename(dirname(f)),
+        zscore = limma::zscore(count, dist="chisq", df=1),
+      )
+  }) %>%
+    dplyr::bind_rows()
+}
+```
+
+
+## 1. Methods
+
+small RNA reads were first mapped to  
+  - 1 small structural RNAs (rRNAs, snRNAs, snoRNAs)  
+  - 2 miRNA hairpin    
+  
+then, remove the reads (shorter than 23nt and larger than 29nt)  
+
+The rest reads were mapped to  
+  - 3 TE consensus  
+  - 4 piRNA clusters  
+  - 5 genome
+
+## 2. Results
+
+```{r}
+prj_dir  <- params$input_dir
+prj_dir  <- normalizePath(prj_dir)
+# prj_dir  <- normalizePath("..")
+smp_name <- basename(prj_dir)
+```
+
+### 2.1 Quality control
+
+1. Trimming adapters (>18nt) 
+2. Searching for the UMI+barcodes 
+3. Removing PCR_dup (based on UMI+barcodes)  
+
+`total`:     The raw reads    
+`rm_ad`:     The number of reads, after trimming adapters (>18nt)   
+`too_short`: The number of reads shorter than 18nt  
+`no_umi`:    The number of reads, do not contains proper UMI+barcode  
+`pcr_dup`:   The number of PCR duplicates    
+`clean`:     The number of clean reads, for down-stream analysis  
+
+```{r, eval=FALSE}
+hiseqr::to_DT(df)
+```
+
+
+```{r , fig.width=8, fig.height=5, eval=FALSE}
+# pie
+dfx <- df %>%
+  tidyr::pivot_longer(names_to = "group", values_to = "count", 
+                      c("too_short", "no_umi", "pcr_dup", "clean")) %>%
+  dplyr::select(id, total, group, count) %>%
+  dplyr::mutate(pct   = round(count / total * 100, 1),
+                label = paste0(group, "\n", pct, "%"))
+
+dfx %>%
+  ggpubr::ggpie("count", label = "label", fill = "group", lab.pos = "out") + 
+  scale_fill_fish(discrete = TRUE, option = "Scarus_tricolor")
+```
+
+
+### 2.2 Distribution of reads
+
+Check the number of reads in `smRNA`, `miRNA`, `size_exclude`, `TE`, `piRNA_cluster`,
+`genome` and `unmap`:
+
+```{r load data}
+f  <- "../11.stat/fx_stat.reads.csv"
+group_list <- c("04.smRNA", "05.miRNA", "06.size_exclude",  "07.te", 
+                "08.piRNA_cluster", "09.genome", "10.unmap")
+df <- read.csv(f) %>%
+  dplyr::select(sample, group, all) %>% 
+  dplyr::filter(group %in% c("00.raw_data", group_list)) %>%
+  dplyr::rename(count = all) %>%
+  dplyr::mutate(million = round(count / 1e6, 2)) 
+
+hiseqr::to_DT(df)
+```
+
+```{r , fig.width=8, fig.height=5}
+library(ggpubr)
+df %>% 
+  dplyr::filter(group %in% group_list) %>%
+  ggpubr::ggpie("count", label = "group", fill = "group", lab.pos = "out") + 
+  scale_fill_fish(discrete = TRUE, option = "Scarus_tricolor")
+```
+
+
+### 2.3 Proportion of 1U and 10A in reads
+
+Calculate the distribution of reads with: `U` at position 1 and `A` at position 10.
+
+So the reads were split into four groups: 
+
+`U1_A10`, U1 and A10,
+`U1_B10`, U1 and not A10, 
+`V1_A10`, not U1, A10 
+`V1_B10`, not U1, not A10
+
+```{r, fig.width=8, fig.height=4}
+df1 <- readr::read_csv(f) %>%
+  dplyr::filter(group %in% group_list) %>%
+  tidyr::pivot_longer(names_to = "u1a10", values_to = "count", 
+                      c("U1_A10", "U1_B10", 
+                        "V1_A10", "V1_B10"))
+
+bar_plot(df1, x = "count", y = "group", label = NA, 
+         group = "u1a10", direction = "horizontal", position = "fill") +
+  scale_fill_fish(option = "Scarus_tricolor", discrete = TRUE)
+```
+
+
+### 2.4 Length distribution of reads
+
+```{r}
+f_list <- list.files("..", "*fragsize.csv$", full.names = TRUE, recursive = TRUE)
+```
+
+#### 2.4.1 Raw reads
+
+```{r}
+f1 <- f_list[grepl("00.raw_data", f_list)]
+if(length(f1) >= 1) {
+  df1 <- read.csv(f1[1])
+}
+```
+
+```{r, fig.width=6, fig.height=3}
+hiseqr::bar_plot_lendist(df1) +
+  ggtitle("00.raw_data")
+```
+
+
+#### 2.4.2 Map to TE consensus
+
+
+```{r}
+# count
+c_list <- list.files("../07.te/", "*.count.txt$", 
+                     full.names = TRUE, recursive = TRUE)
+df_te  <- read_count(c_list)
+# order unique
+te_rank <- df_te %>%
+  dplyr::filter(index %in% "unique") %>%
+  dplyr::arrange(desc(zscore)) %>%
+  dplyr::pull(name)
+
+# re-level df_te
+df_te   <- df_te %>%
+  dplyr::mutate(
+    name  = forcats::fct_relevel(name, te_rank),
+    index = forcats::fct_relevel(index, c("unique", "multi", "both")))
+p_te    <- df_te %>%
+   hiseqr::bar_plot(x = "zscore", y = "name", label = NA, group = "index", direction = "horizontal") +
+  facet_grid(~index)
+```
+
+```{r, fig.width=5, fig.height=15}
+p_te
+```
+
+
+
+`unique`: unique mapped reads;    
+`multi`: multi mapped reads;  
+`both`: all mapped reads;   
+
+```{r}
+f4 <- f_list[grepl("07.te", f_list)]
+f4 <- f4[grepl("unique|multi|both", f4)]
+f4 <- f4[! grepl("U1_A10", f4)]
+f4 <- f4[! grepl("overlap", f4)]
+
+df4 <- lapply(f4, function(i) {
+  iname <- basename(dirname(i))
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=8, fig.height=4} 
+hiseqr::bar_plot_lendist(df4) +
+  facet_wrap(~group, ncol = 2, scales = "free")
+```
+
+Check the distribution of `U1_A10` for `unique` mapped reads:
+
+```{r}
+f4 <- f_list[grepl("07.te", f_list)]
+f4 <- f4[grepl("U1_A10", f4)]
+f4 <- f4[! grepl(".unmap.", f4)]
+f4 <- f4[basename(dirname(dirname(f4))) == "unique"]
+
+df4 <- lapply(f4, function(i) {
+  iname <- gsub(".fragsize.csv", "", basename(i))
+  iname <- gsub(smp_name, "", iname)
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+
+```{r, fig.width=8, fig.height=4} 
+hiseqr::bar_plot_lendist(df4) +
+  facet_wrap(~group, ncol = 2, scales = "fixed")
+```
+
+
+#### 2.4.3 Map to piRNA_clusters
+
+```{r}
+# count
+c_list <- list.files("../08.piRNA_cluster/", "*.count.txt$", 
+                     full.names = TRUE, recursive = TRUE)
+df_piRC  <- read_count(c_list)
+# order unique
+piRC_rank <- df_piRC %>%
+  dplyr::filter(index %in% "unique") %>%
+  dplyr::arrange(desc(zscore)) %>%
+  dplyr::pull(name)
+
+# re-level df_te
+df_piRC   <- df_piRC %>%
+  dplyr::mutate(
+    name  = forcats::fct_relevel(name, piRC_rank),
+    index = forcats::fct_relevel(index, c("unique", "multi", "both")))
+p_piRC   <- df_piRC %>%
+   hiseqr::bar_plot(x = "zscore", y = "name", label = NA, group = "index", direction = "horizontal") +
+  facet_grid(~index)
+```
+
+```{r, fig.width=5, fig.height=15}
+p_piRC
+```
+
+
+`unique`: unique mapped reads;    
+`multi`: multi mapped reads;  
+`both`: all mapped reads;   
+
+```{r}
+f6 <- f_list[grepl("08.piRNA_cluster", f_list)]
+f6 <- f6[grepl("uniq|multi|both", f6)]
+f6 <- f6[! grepl("multi_k2", f6)]
+f6 <- f6[! grepl(".unmap.", f6)]
+f6 <- f6[! grepl("U1_A10", f6)]
+
+df6 <- lapply(f6, function(i) {
+  iname <- basename(dirname(i))
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=8, fig.height=4} 
+hiseqr::bar_plot_lendist(df6) +
+  facet_wrap(~group, ncol = 2, scales = "free")
+```
+
+Check the distribution of `U1_A10` for `unique` mapped reads:
+
+```{r}
+f5 <- f_list[grepl("08.piRNA_cluster", f_list)]
+f5 <- f5[grepl("U1_A10", f5)]
+f5 <- f5[! grepl(".unmap.|overlap", f5)]
+f5 <- f5[basename(dirname(dirname(f5))) == "unique"]
+
+df5 <- lapply(f5, function(i) {
+  iname <- gsub(".fragsize.csv", "", basename(i))
+  iname <- gsub(smp_name, "", iname)
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=8, fig.height=4} 
+hiseqr::bar_plot_lendist(df5) +
+  facet_wrap(~group, ncol = 2, scales = "fixed")
+```
+
+
+
+#### 2.4.4 smRNA and miRNA reads
+  
+`both`: all mapped reads;   
+
+```{r}
+f2 <- f_list[grepl("04.smRNA|05.miRNA", f_list)]
+f2 <- f2[grepl("uniq|multi|both", f2)]
+f2 <- f2[! grepl("U1_A10|.unmap.|overlap", f2)]
+
+df2 <- lapply(f2, function(i) {
+  iname <- basename(dirname(dirname(i)))
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=10, fig.height=3} 
+hiseqr::bar_plot_lendist(df2) +
+  facet_wrap(~group, ncol = 2, scales = "free")
+```
+
+#### 2.4.5 size not match piRNAs [<23, >29]
+
+```{r}
+f3 <- f_list[grepl("06.size_exclude", f_list)]
+df3 <- lapply(f3, function(i) {
+  iname <- basename(dirname(i))
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=6, fig.height=3} 
+hiseqr::bar_plot_lendist(df3) +
+  facet_wrap(~group, ncol = 2, scales = "free")
+```
+
+
+#### 2.4.6 Map to genome
+
+`unique`: unique mapped reads;    
+`multi`: multi mapped reads;  
+`unique_multi`: all mapped reads;   
+
+```{r}
+f6 <- f_list[grepl("09.genome", f_list)]
+f6 <- f6[grepl("uniq|multi|both", f6)]
+f6 <- f6[! grepl("multi_k2|U1_A10|overlap", f6)]
+
+df6 <- lapply(f6, function(i) {
+  iname <- basename(dirname(i))
+  read.csv(i) %>%
+    dplyr::mutate(group = iname)
+}) %>%
+  dplyr::bind_rows()
+```
+
+```{r, fig.width=8, fig.height=4} 
+hiseqr::bar_plot_lendist(df6) +
+  facet_wrap(~group, ncol = 2, scales = "free")
+```
+
+
+
+
+

@@ -1,5 +1,6 @@
 #test dir
 test/
+.ipynb_checkpoints/
 __pycache__/*
 ^\.*
 .ipynb*
