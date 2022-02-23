@@ -120,6 +120,7 @@ class PiRNApipe(object):
         self = update_obj(self, kwargs, force=True)
         args_local = PipeConfig(**self.__dict__)
         self = update_obj(self, args_local.__dict__, force=True)
+        self.hiseq_type = 'piRNA_r1'
         Config().to_toml(self.__dict__, self.config_toml)
 
 
