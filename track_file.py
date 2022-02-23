@@ -328,7 +328,7 @@ def bam_to_bw(bam, bw, scale=1, gsize=0, threads=8):
         '--scaleFactor {}'.format(scale),
         '--effectiveGenomeSize {}'.format(ref_size),
         '-p {}'.format(threads),
-        '--binSize 1 --normalizeUsing None',
+        '--binSize 1 --normalizeUsing CPM',
         '2> {}'.format(cmd_log),
     ])
     with open(cmd_sh, 'wt') as w:
@@ -368,7 +368,7 @@ def run_bam_to_bw(x, group='te', strandness=None, unique='unique', outdir=None):
     if not is_pipe_dir(x):
         log.error('x is not pipe() project dir, {}'.format(x))
         return None
-    group_list = ['smRNA', 'miRNA', 'te', 'piRC', 'genome']
+    group_list = ['smRNA', 'miRNA', 'te', 'piRC', 'genome', 'genome2']
     if not group in group_list:
         log.error('group={} not valid, choose: {}'.format(group, group_list))
         return None
@@ -389,7 +389,8 @@ def run_bam_to_bw(x, group='te', strandness=None, unique='unique', outdir=None):
         return None
     # scale
     n_map = get_x_map(x, 'map') # clean - unmap
-    scale = 1e6/n_map if n_map > 0 else 1
+    # scale = 1e6/n_map if n_map > 0 else 1
+    scale = 1
     if strandness in ['fwd', '1', 'both']:
         # forward
         bam_fwd = prefix+'.fwd.bam'

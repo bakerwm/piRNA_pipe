@@ -120,6 +120,7 @@ class PiRNApipe(object):
         self = update_obj(self, kwargs, force=True)
         args_local = PipeConfig(**self.__dict__)
         self = update_obj(self, args_local.__dict__, force=True)
+        self.hiseq_type = 'piRNA_r1'
         Config().to_toml(self.__dict__, self.config_toml)
 
 
@@ -265,6 +266,19 @@ class PiRNApipe(object):
         return fout[2] # bam, fq_align, fq_unal
 
 
+    def run_genome2(self, fq):
+        """map all clean reads to genome
+        fq from step 03.overlap
+        """
+        log.info('13.Map all reads to genome')
+        fout = self.run_align(fq, 'genome2', 'both')
+        self.run_align(fq, 'genome2', 'unique')
+        self.run_align(fq, 'genome2', 'multi')
+        # # link unal
+        # file_symlink(fout[2], self.fq_unal)
+        return fout[2] # bam, fq_align, fq_unal
+    
+
     def run_align(self, fq, group, unique='both'):
         """Align reads to index"""
         args_d = {
@@ -288,6 +302,10 @@ class PiRNApipe(object):
                 'index': self.genome_index, 
                 'outdir': os.path.join(self.genome_dir, unique),
             },
+            'genome2': {
+                'index': self.genome_index, 
+                'outdir': os.path.join(self.genome2_dir, unique),
+            },
         }
         # check args
         args = args_d.get(group, {})
@@ -310,15 +328,17 @@ class PiRNApipe(object):
         
     
     def run(self):
-        # main
         # raw->clean->collapse->overlap->smRNA->miRNA->size_select
+        fq_ov = self.run_overlap(
+            self.run_collapse(
+                self.run_trim(
+                    self.prep_raw(self.fq))))
         fq_size = self.run_size_select(
             self.run_miRNA(
-                self.run_smRNA(
-                    self.run_overlap(
-                        self.run_collapse(
-                            self.run_trim(
-                                self.prep_raw(self.fq)))))))
+                self.run_smRNA(fq_ov)))
+        # align all reads to genome:
+        self.run_genome2(fq_ov)
+
         # switch workflow
         if self.workflow == 1:
             # workflow-1: smRNA->miRNA->size->TE->piRC->genome
@@ -380,7 +400,7 @@ def run_pipe_single(args):
     """
     args_i = args[0].copy()
     i = args[1]
-    print('!AAAA-2', i)
+    # print('!AAAA-2', i)
     
     # no-overlap
     parallel = args_i['parallel_jobs'] if len(args_i['fq_input']) == 1 else 1
@@ -400,12 +420,12 @@ def main():
     # prepare arguments
     args_list = [[args_local, i] for i in range(len(args.fq_input))]
     if len(args.fq_input) > 1 and args.parallel_jobs > 1:
-        print('!BBBB-2', args.parallel_jobs, 'Pool')
+        # print('!BBBB-2', args.parallel_jobs, 'Pool')
         with Pool(processes=args.parallel_jobs) as pool:
             pool.map(run_pipe_single, args_list)
             # pool.map(run_pipe_single, range(len(args.fq_input)))
     else:
-        print('!BBBB-3', args.parallel_jobs, 'non-Pool')
+        # print('!BBBB-3', args.parallel_jobs, 'non-Pool')
         tmp = [run_pipe_single(i) for i in args_list]
         
 #     for fq in args.fq_input:
