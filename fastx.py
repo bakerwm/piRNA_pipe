@@ -17,8 +17,10 @@ import numpy as np
 from xopen import xopen
 from multiprocessing import Pool
 from hiseq.utils.helper import *
-from hiseq.fragsize.fragsize import BamFragSize
-from hiseq.utils.seq import Fastx
+# from hiseq.fragsize.fragsize import BamFragSizeR1
+from hiseq.utils.fastx import Fastx
+from fx_fragsize import fx_fragsize
+from bam_fragsize import BamFragSizeR1
 
 
 class FxFragSize(object):
@@ -69,9 +71,17 @@ class FxFragSize(object):
             log.info('fragsize() skipped, file exists: {}'.format(csv_file))
         else:
             if f_ext == '.bam':
-                BamFragSize(fx, asPE=False, strandness=True).saveas(csv_file)
+                b = BamFragSizeR1(
+                    bam=fx,
+                    outdir=outdir,
+                    labels=None,
+                    csv_file=csv_file,
+                    strandness=True
+                ).run()
+#                 BamFragSize(fx, asPE=False, strandness=True).saveas(csv_file)
             elif f_ext == '.gz':
-                Fastx(fx).len_dist(csv_file=csv_file)
+                # Fastx(fx).len_dist(csv_file=csv_file)
+                fx_fragsize(fx, csv_file)
             else:
                 pass
 

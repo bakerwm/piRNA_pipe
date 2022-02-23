@@ -108,7 +108,7 @@ class PipeConfig(object):
                 type(self.fq).__name))
         # smp_name
         if not isinstance(self.smp_name, str):
-            self.smp_name = fq_name(self.fq, pe_fix=False)
+            self.smp_name = fq_name(self.fq, fix_pe=False)
         # fix smp_name, "." by "_"
         self.smp_name = re.sub('[^\w+]', '_', self.smp_name)
         self.fx_name = self.smp_name + '.fastq.gz' # force fastq output

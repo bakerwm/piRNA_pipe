@@ -66,7 +66,8 @@ read_count <- function(x) {
         sample = gsub(".count.csv", "", basename(f)),
         group = basename(dirname(dirname(f))),
         index = basename(dirname(f)),
-        zscore = limma::zscore(count, dist="chisq", df=1),
+        zscore = as.numeric(scale(count))
+        # zscore = limma::zscore(count, dist="chisq", df=1),
       )
   }) %>%
     dplyr::bind_rows()
@@ -91,6 +92,7 @@ The rest reads were mapped to
 
 ```{r}
 prj_dir  <- params$input_dir
+# prj_dir  <- ".."
 prj_dir  <- normalizePath(prj_dir)
 # prj_dir  <- normalizePath("..")
 smp_name <- basename(prj_dir)
@@ -118,8 +120,8 @@ hiseqr::to_DT(df)
 # pie
 dfx <- df %>%
   tidyr::pivot_longer(names_to = "group", values_to = "count", 
-                      c("too_short", "no_umi", "pcr_dup", "clean")) %>%
-  dplyr::select(id, total, group, count) %>%
+                      c("too_short", "no_umi", "dup", "output")) %>%
+  dplyr::select(name, input, group, count) %>%
   dplyr::mutate(pct   = round(count / total * 100, 1),
                 label = paste0(group, "\n", pct, "%"))
 
